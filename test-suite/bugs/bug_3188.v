@@ -3,7 +3,7 @@
 Module Long.
   Require Import Corelib.Classes.RelationClasses.
 
-  #[export] Hint Extern 0 => apply reflexivity : typeclass_instances.
+  #[export] Hint Extern 0 => simple apply reflexivity : typeclass_instances.
   #[export] Hint Extern 1 => symmetry.
 
   Lemma foo : exists m' : Type, True.
