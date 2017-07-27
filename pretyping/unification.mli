@@ -87,6 +87,8 @@ type unify_flags = {
   resolve_evars : bool
 }
 
+val flags_of : unify_flags -> Evarconv.unify_flags
+
 val default_core_unify_flags : unit -> core_unify_flags
 val default_no_delta_core_unify_flags : unit -> core_unify_flags
 
