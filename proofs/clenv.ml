@@ -1127,13 +1127,14 @@ let fail_quick_unif_flags = {
 }
 
 (* let unifyTerms m n = walking (fun wc -> fst (w_Unify CONV m n [] wc)) *)
-let unify ?(flags=fail_quick_unif_flags) ~cv_pb m =
+let unify ?(flags=fail_quick_unif_flags) ?(with_ho=true) ~cv_pb m =
   Proofview.Goal.enter begin fun gl ->
     let env = Proofview.Goal.env gl in
     let sigma = Proofview.Goal.sigma gl in
     let concl = Proofview.Goal.concl gl in
     try
-      let _, sigma = w_unify ~metas:Meta.empty env sigma cv_pb ~flags m concl in
+      let flags = Unification.flags_of flags in
+      let sigma = Evarconv.unify ~flags ~with_ho env sigma cv_pb m concl in
       Proofview.Unsafe.tclEVARSADVANCE sigma
     with e when CErrors.noncritical e ->
       let info = Exninfo.reify () in

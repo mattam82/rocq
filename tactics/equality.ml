@@ -1229,9 +1229,9 @@ let discrEq eq =
       discr_positions env sigma eq cpath discr
   end
 
-let make_clause with_evars env sigma t lbindc =
-  let sigma', eq_clause = EClause.make_evar_clause env sigma t in
-  let sigma' = EClause.solve_evar_clause env sigma' false eq_clause lbindc in
+let make_clause with_evars env sigma c t lbindc =
+  let sigma', eq_clause = EClause.make_evar_clause env sigma c t in
+  let sigma', eq_clause = EClause.solve_evar_clause env sigma' ~hyps_only:false eq_clause lbindc in
   let () = if not with_evars then EClause.check_evar_clause env sigma sigma' eq_clause in
   sigma', eq_clause
 
@@ -1243,7 +1243,7 @@ let onEquality with_evars tac (c,lbindc) =
   let t = Retyping.get_type_of env sigma c in
   let s = Retyping.get_sort_of env sigma t in
   let t' = try snd (Tacred.reduce_to_quantified_ind env sigma t) with UserError _ -> t in
-  let sigma, eq_clause = make_clause with_evars env sigma t' lbindc in
+  let sigma, eq_clause = make_clause with_evars env sigma c t' lbindc in
   let filter h =
     if h.EClause.hole_deps then None
     else
