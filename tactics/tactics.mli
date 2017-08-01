@@ -385,17 +385,17 @@ val use_clear_hyp_by_default : unit -> bool
 val apply_clear_request : clear_flag -> bool -> Id.t option -> unit Proofview.tactic
 
 (** [apply t] applies the lemma [t] to the conclusion. *)
-val apply : constr -> unit Proofview.tactic
+val apply : ?with_delta:bool -> constr -> unit Proofview.tactic
 
 (** Variant of [apply] which allows creating new evars. *)
-val eapply : ?with_classes:bool -> constr -> unit Proofview.tactic
+val eapply : ?with_classes:bool -> ?with_delta:bool -> constr -> unit Proofview.tactic
 
 (** Variant of [apply] which takes a term with bindings (e.g. [apply foo with (x := 42)]). *)
-val apply_with_bindings : constr with_bindings -> unit Proofview.tactic
+val apply_with_bindings : ?with_delta:bool -> constr with_bindings -> unit Proofview.tactic
 
 (** Variant of [eapply] which takes a term with bindings (e.g. [eapply foo with (x := 42)]).
     - [with_classes] specifies whether to attempt to solve remaining evars using typeclass resolution. *)
-val eapply_with_bindings : ?with_classes:bool -> constr with_bindings -> unit Proofview.tactic
+val eapply_with_bindings : ?with_classes:bool -> ?with_delta:bool -> constr with_bindings -> unit Proofview.tactic
 
 (** [apply_with_bindings_gen ?with_classes advanced with_evars [(c1, t1); (c2, t2); ...]] is the most
     general version of [apply]. It applies lemmas [t1], [t2], ... in order.

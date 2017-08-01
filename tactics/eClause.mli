@@ -190,3 +190,49 @@ val explain_no_such_bound_variable : Id.t list -> Id.t CAst.t -> 'a
 val error_not_right_number_missing_arguments : int -> 'a
 
 val check_evar_clause :  Environ.env -> evar_map -> evar_map -> clause -> unit
+
+(** {6 Refinement tactics based on clauses} *)
+
+val with_clause : constr * types -> (clause -> unit Proofview.tactic) -> unit Proofview.tactic
+(** [with_clause (c, t) k] Turn (c, t) into a clause and apply the tactic to it.  *)
+
+val clenv_refine2 :
+  ?with_evars:bool -> ?with_classes:bool -> ?shelve_subgoals:bool ->
+  ?flags:Unification.unify_flags -> ?origsigma:Evd.evar_map ->
+  clause -> unit Proofview.tactic
+(** Refine the goal with the given clause:
+    - First unify the clause with the goals conclusion, then:
+    - If with_classes is true, resolve typeclasses and fail if
+    with_evars is false and resolution fails.
+    - If with_evars is false, check for remaining dependent subgoals that
+    would be introduced by the refinement. Fresh existential variables
+    resulting from the pruning of an original one from origsigma
+    (due to clearing an hypothesis) are still allowed.
+    - If shelve_subgoals is true (the default), dependent subgoals are shelved. *)
+
+val clenv_refine_no_check :
+  ?with_evars:bool -> ?with_classes:bool -> ?shelve_subgoals:bool ->
+  ?flags:Unification.unify_flags -> ?origsigma:Evd.evar_map ->
+  clause -> unit Proofview.tactic
+(** Refine the goal without going through the first step of unification with
+    the goal's conclusion. *)
+
+val clenv_refine_bindings :
+  ?with_evars:bool -> ?with_classes:bool -> ?shelve_subgoals:bool ->
+  ?flags:Unification.unify_flags ->
+  hyps_only:bool -> delay_bindings:bool -> EConstr.constr Tactypes.bindings ->
+  ?origsigma:Evd.evar_map -> clause -> unit Proofview.tactic
+(** Refine the goal additionally using the given bindings to complete the clause. *)
+
+val clenv_solve_clause_constraints :
+  ?flags:Unification.unify_flags -> with_ho:bool -> clause -> clause Proofview.tactic
+(** Multi-goal tactic to solve the remaining constraints in the current [sigma]
+    and advance the clause according to their solution. Fails if there remains
+    unsolvable unification constraints. *)
+
+val clenv_check_dep_holes : bool -> Environ.env -> Evd.evar_map -> ?origsigma:Evd.evar_map ->
+                            clause -> Evar.t list Proofview.tactic
+(** Check that dependent holes do not remain if the bool is false,
+    returning the dependent holes as a result. This takes optionally into account
+    an original evar_map to check for fresh existentials resulting from pruning
+    original ones, which are allowed dependent holes even if bool is false. *)

@@ -457,3 +457,162 @@ let check_evar_clause env sigma sigma' eq_clause =
     let filter h = if List.exists (Evar.equal h.hole_evar_key) evkl then Some h.hole_name else None in
     let bindings = List.map_filter filter eq_clause.cl_holes in
     Loc.raise (Logic.RefinerError (env, sigma, UnresolvedBindings bindings))
+
+(** {6 Refinement tactics based on clauses} *)
+
+let dft = Unification.default_unify_flags
+
+let holes_goals sigma holes =
+  List.map (fun h -> fst (destEvar sigma h.hole_evar)) holes
+
+let clenv_check_dep_holes with_evars env sigma ?origsigma clenv =
+  let holes = clenv_dep_holes clenv in
+  if not with_evars then
+    let holes' =
+      match origsigma with
+      | None -> holes
+      | Some origsigma ->
+         let origevars = Evar.Map.domain (Evd.undefined_map origsigma) in
+         let filter h =
+           not (Evar.Set.mem (fst (destEvar sigma h.hole_evar)) (Evarutil.reachable_from_evars sigma origevars)) in
+         List.filter filter holes
+    in
+     if not (List.is_empty holes') then
+       Proofview.tclZERO
+         (Logic.RefinerError (env, sigma, Logic.UnresolvedBindings
+                                (List.map (fun h -> h.hole_name) holes')))
+     else Proofview.tclUNIT (holes_goals sigma holes)
+  else Proofview.tclUNIT (holes_goals sigma holes)
+
+let clenv_solve_clause_constraints ?(flags=dft ()) ~with_ho clenv =
+  let open Proofview in
+  let open Proofview.Notations in
+  tclENV >>= fun env ->
+  tclEVARMAP >>= fun sigma ->
+    try
+      let flags = Unification.flags_of flags in
+      let sigma' =
+        Evarconv.solve_unif_constraints_with_heuristics env ~flags ~with_ho sigma
+      in Unsafe.tclEVARS sigma' <*> tclUNIT (clenv_advance sigma' clenv)
+    with e when CErrors.noncritical e -> tclZERO e
+
+let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true) ?origsigma
+                     flags (sigma, clenv) =
+  let open Proofview in
+  let open Proofview.Notations in
+  Proofview.Goal.enter begin fun gl ->
+  let env = Proofview.Goal.env gl in
+  let sigma, clenv =
+    try
+      let sigma = Evarconv.solve_unif_constraints_with_heuristics ~flags ~with_ho:true env sigma in
+      sigma, clenv_advance sigma clenv
+    with e when CErrors.noncritical e -> sigma, clenv in
+  let sigma =
+    if with_classes then
+      let sigma = Typeclasses.resolve_typeclasses ~filter:Typeclasses.all_evars
+        ~fail:(not with_evars) env sigma
+      in
+      let is_goal ev =
+        let Evd.EvarInfo evi = Evd.find sigma ev in
+        Typeclasses.all_goals ev (Lazy.from_val (snd (Evd.evar_source evi)))
+      in
+      Typeclasses.make_unresolvables is_goal sigma (* MD FIXME I put this randomly *)
+    else sigma
+  in
+  let run sigma =
+    (* Declare the future goals here, as they should become subgoals of this refine. *)
+    let declare_goal sigma h =
+      let ev, _ = destEvar sigma h.hole_evar in
+      Evd.declare_future_goal ev sigma
+    in
+    let sigma = List.fold_left declare_goal sigma (clenv_holes clenv) in
+    let v = Reductionops.nf_betaiota env sigma (clenv_val clenv) in
+    sigma, v
+  in
+  let reduce_goal gl =
+    let sigma = Proofview.Goal.sigma gl in
+    let concl = Proofview.Goal.concl gl in
+    let glev = Proofview.Goal.goal gl in
+    (* For compatibility: beta iota reduction *)
+    let concl = Reductionops.clos_norm_flags RedFlags.betaiota env sigma concl in
+    let sigma = Evd.downcast glev concl sigma in
+    let sigma = Typeclasses.make_unresolvables (fun ev -> Evar.equal ev glev) sigma in
+    Proofview.Unsafe.tclEVARS sigma
+  in
+  Proofview.Unsafe.tclEVARS sigma <*>
+    clenv_check_dep_holes with_evars env sigma ?origsigma clenv >>= (fun deps ->
+  (Refine.refine ~typecheck:false run) <*>
+  (if shelve_subgoals then shelve_goals deps else tclUNIT ()) <*>
+    Proofview.Goal.enter reduce_goal)
+  end
+
+let clenv_unify_concl_tac flags clenv k =
+  Proofview.Goal.enter begin fun gl ->
+  let env = Proofview.Goal.env gl in
+  let sigma = Proofview.Goal.sigma gl in
+  let concl = Proofview.Goal.concl gl in
+  match clenv_unify_concl env sigma flags concl clenv with
+  | (sigma, clenv) -> k (sigma, clenv)
+  | exception Evarconv.UnableToUnify (evd, reason) ->
+    let ex = Pretype_errors.(PretypeError (env, evd,
+        CannotUnify (concl, clenv_concl clenv, Some reason))) in
+    Proofview.tclZERO ex
+  end
+
+let clenv_refine_bindings
+    ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true)
+    ?(flags=dft ()) ~hyps_only ~delay_bindings b ?origsigma clenv =
+  let open Proofview in
+  let open Proofview.Notations in
+  let flags = Unification.flags_of flags in
+  Proofview.Goal.enter begin fun gl ->
+    let env = Proofview.Goal.env gl in
+    let sigma = Proofview.Goal.sigma gl in
+    let sigma, clenv, bindings =
+      if delay_bindings then
+        sigma, clenv, Some (None, false, b)
+      else
+        try let sigma, clenv = solve_evar_clause env sigma ~hyps_only clenv b in
+            sigma, clenv, None
+        with e when CErrors.noncritical e -> sigma, clenv, Some (Some e, hyps_only, b)
+    in
+    (Unsafe.tclEVARS sigma) <*>
+    (clenv_unify_concl_tac flags clenv
+      (fun (sigma, clenv) ->
+        try let sigma, clenv =
+          match bindings with
+          | Some (exn, hyps_only, b) ->
+             (* Hack to make [exists 0] on [Σ x : nat, True] work, we
+                use implicit bindings for a hole that's not dependent
+                after unification, but reuse the typing information. *)
+             solve_evar_clause env sigma ~hyps_only clenv b
+          | None -> sigma, clenv_recompute_deps env sigma ~hyps_only:false clenv
+        in
+        clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?origsigma
+                         flags (sigma, clenv)
+        with e when Pretype_errors.precatchable_exception e -> Proofview.tclZERO e))
+  end
+
+let clenv_refine_no_check
+      ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true)
+      ?(flags=dft ()) ?origsigma clenv =
+  let open Proofview.Notations in
+  let flags = Unification.flags_of flags in
+  Proofview.tclEVARMAP >>= fun sigma ->
+  clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?origsigma
+                   flags (sigma, clenv)
+
+let clenv_refine2 ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true)
+                  ?(flags=dft ()) ?origsigma clenv =
+  let flags = Unification.flags_of flags in
+  clenv_unify_concl_tac flags clenv
+   (clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?origsigma flags)
+
+let with_clause (c, t) kont =
+  let open Proofview in
+  let open Proofview.Notations in
+  Proofview.Goal.enter begin fun gl ->
+  let env = Proofview.Goal.env gl in
+  let sigma = Proofview.Goal.sigma gl in
+  let sigma, cl = make_clenv_from_env env sigma (c, t) in
+  Unsafe.tclEVARS sigma <*> kont cl end
