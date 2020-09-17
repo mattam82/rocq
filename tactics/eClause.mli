@@ -106,18 +106,22 @@ val make_clenv_from_env :
 (** Wrapper for [make_evar_clause], simply removing casts in the value argument. *)
 
 val solve_evar_clause : env -> evar_map -> hyps_only:bool -> clause -> EConstr.constr bindings ->
-  evar_map * clause
-(** [solve_evar_clause env sigma hyps_only cl bl] tries to solve the holes contained
-    in [cl] according to the [bl] argument. Assumes that [bl] are well-typed in
-    the environment. The boolean [hyps_only] is a compatibility flag that allows to
-    consider arguments to be dependent only when they appear in hypotheses and
-    not in the conclusion. This boolean is only used when [bl] is of the form
-    [ImplicitBindings _]. *)
+  evar_map * (hole * EConstr.constr) list * clause
+(** [solve_evar_clause env sigma recompute_deps hyps_only cl bl] tries
+    to solve the holes contained in [cl] according to the [bl]
+    argument. Assumes that [bl] are well-typed in the environment. The
+    boolean [recompute_deps] tells if the dependent holes of the clause
+    have to be recomputed first, in which case [hyps_only] is a flag
+    that allows to consider arguments to be dependent only when they
+    appear in hypotheses and not in the conclusion. This boolean is
+    especially used when [bl] is of the form [ImplicitBindings _] to
+    determine which bindings to instantiate.
+    Returns the new [sigma] and the advanced clause. *)
 
 val make_clenv_bindings :
   env -> evar_map -> ?len:int -> ?occs:Evarconv.occurrences_selection ->
   constr * constr -> hyps_only:bool -> constr bindings ->
-  evar_map * clause
+  evar_map * (hole * EConstr.constr) list * clause
 (** Combination of [make_evar_clause] and [solve_evar_clause], creating a clause
     and immediately solving them with the given bindings. *)
 
@@ -217,10 +221,12 @@ val clenv_refine_no_check :
 (** Refine the goal without going through the first step of unification with
     the goal's conclusion. *)
 
+val apply_delayed_bindings : env -> (hole * EConstr.t) list -> Evd.evar_map -> Evd.evar_map
+
 val clenv_refine_bindings :
   ?with_evars:bool -> ?with_classes:bool -> ?shelve_subgoals:bool ->
   ?flags:Unification.unify_flags ->
-  hyps_only:bool -> delay_bindings:bool -> EConstr.constr Tactypes.bindings ->
+  hyps_only:bool -> EConstr.constr Tactypes.bindings ->
   ?origsigma:Evd.evar_map -> clause -> unit Proofview.tactic
 (** Refine the goal additionally using the given bindings to complete the clause. *)
 

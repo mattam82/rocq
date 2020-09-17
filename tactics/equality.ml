@@ -1231,7 +1231,8 @@ let discrEq eq =
 
 let make_clause with_evars env sigma c t lbindc =
   let sigma', eq_clause = EClause.make_evar_clause env sigma c t in
-  let sigma', eq_clause = EClause.solve_evar_clause env sigma' ~hyps_only:false eq_clause lbindc in
+  let sigma', delayed, eq_clause = EClause.solve_evar_clause env sigma' ~hyps_only:false eq_clause lbindc in
+  let sigma' = EClause.apply_delayed_bindings env delayed sigma' in
   let () = if not with_evars then EClause.check_evar_clause env sigma sigma' eq_clause in
   sigma', eq_clause
 

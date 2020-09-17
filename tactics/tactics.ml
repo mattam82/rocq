@@ -1655,7 +1655,7 @@ let descend_in_conjunctions avoid tac (err, info) c =
 (****************************************************)
 
 let general_apply ?(with_classes=true) ?(respect_opaque=false) ~with_delta ~with_destruct ~with_evars
-    ~delay_bindings ~clear_flag {CAst.loc;v=(c,lbind : EConstr.constr with_bindings)} =
+    ~clear_flag {CAst.loc;v=(c,lbind : EConstr.constr with_bindings)} =
   Proofview.Goal.enter begin fun gl ->
   let concl = Proofview.Goal.concl gl in
   let env = Proofview.Goal.env gl in
@@ -1688,7 +1688,7 @@ let general_apply ?(with_classes=true) ?(respect_opaque=false) ~with_delta ~with
         Proofview.tclTHEN (Proofview.Unsafe.tclEVARS sigma')
                           (EClause.clenv_refine_bindings
                            ~with_evars ~with_classes ~flags ~hyps_only:true
-                           ~delay_bindings ~origsigma:sigma lbind clause)
+                           ~origsigma:sigma lbind clause)
       with exn when noncritical exn ->
         let exn, info = Exninfo.capture exn in
         Proofview.tclZERO ~info exn
@@ -1737,11 +1737,11 @@ let general_apply ?(with_classes=true) ?(respect_opaque=false) ~with_delta ~with
 let rec apply_with_bindings_gen ?with_classes b e = function
   | [] -> Proofview.tclUNIT ()
   | [k,cb] -> general_apply ?with_classes ~with_delta:b ~with_destruct:b ~with_evars:e
-                           ~delay_bindings:false ~clear_flag:k cb
+                           ~clear_flag:k cb
   | (k,cb)::cbl ->
       Tacticals.tclTHENLAST
         (general_apply ?with_classes ~with_delta:b ~with_destruct:b ~with_evars:e
-                       ~delay_bindings:false ~clear_flag:k cb)
+                       ~clear_flag:k cb)
         (apply_with_bindings_gen ?with_classes b e cbl)
 
 let apply_with_delayed_bindings_gen b e l =
@@ -1749,7 +1749,7 @@ let apply_with_delayed_bindings_gen b e l =
     Proofview.Goal.enter begin fun _ ->
       Tacticals.tclRUNWITHHOLES e cb
         (fun cb -> general_apply ~respect_opaque:(not b) ~with_delta:b ~with_destruct:b ~with_evars:e
-                     ~delay_bindings:false ~clear_flag:k CAst.(make ?loc cb))
+                     ~clear_flag:k CAst.(make ?loc cb))
     end
   in
   let rec aux = function
@@ -1848,7 +1848,9 @@ let apply_in_once_main flags env sigma innerclause (loc,d,lbind) =
       | UnableToApply -> TacticErrors.unable_to_apply_lemma ?loc env sigma thm innerclause.EClause.cl_concl
       | _ -> Exninfo.iraise e'
   in
-  aux (EClause.make_clenv_bindings env sigma ~hyps_only:false (* TODO ?occs *) (d,thm) lbind)
+  let sigma, delayed, clenv = EClause.make_clenv_bindings env sigma ~hyps_only:false (* TODO ?occs *) (d,thm) lbind in
+  let sigma = EClause.apply_delayed_bindings env delayed sigma in
+  aux (sigma, clenv)
 
 let apply_in_once ?(respect_opaque = false) with_delta
     with_destruct with_evars naming id (clear_flag,{ CAst.loc; v= d,lbind}) tac =
@@ -2165,7 +2167,7 @@ let constructor_core with_evars cstr lbind =
     let (sigma, cons) = Evd.fresh_constructor_instance env sigma cstr in
     let cons = mkConstructU cons in
     let apply_tac = general_apply ~with_delta:true ~with_destruct:false
-                    ~with_evars ~delay_bindings:true
+                    ~with_evars
                     ~clear_flag:None (CAst.make (cons,lbind)) in
     Tacticals.tclTHEN (Proofview.Unsafe.tclEVARS sigma) apply_tac
   end

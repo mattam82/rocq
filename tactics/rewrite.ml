@@ -194,7 +194,7 @@ let decompose_applied_relation env sigma (c,l) =
   let ctype = Retyping.get_type_of env sigma c in
   let find_rel ty =
     let sigma, cl = EClause.make_evar_clause env sigma c ty in
-    let sigma, cl = EClause.solve_evar_clause env sigma ~hyps_only:true cl l in
+    let sigma, delayed, cl = EClause.solve_evar_clause env sigma ~hyps_only:true cl l in
     let { EClause.cl_holes = holes; EClause.cl_concl = t } = cl in
     match decompose_app_rel env sigma t with
     | None -> None
