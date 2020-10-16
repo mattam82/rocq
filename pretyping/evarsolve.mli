@@ -50,8 +50,10 @@ type unify_flags = {
      unifications. *)
   allowed_evars : AllowedEvars.t;
   (* Disallowed evars are treated like rigid variables during unification: they can not be instantiated. *)
-  with_cs : bool
+  with_cs : bool;
   (* Enable canonical structure resolution during unification *)
+  use_pattern_unification : bool;
+  (* Enable Miller-Pfenning pattern unification *)
 }
 
 type unification_result =

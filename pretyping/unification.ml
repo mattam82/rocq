@@ -2714,7 +2714,9 @@ let flags_of flags =
   let closed_ts = Option.default open_ts (flags.core_unify_flags.modulo_conv_on_closed_terms) in
   let subterm_ts = flags.subterm_unify_flags.modulo_delta in
   let allowed_evars = flags.core_unify_flags.allowed_evars in
-  Evarsolve.{ modulo_betaiota; open_ts; closed_ts; subterm_ts; allowed_evars; with_cs = true }
+  let use_pattern_unification = flags.core_unify_flags.use_pattern_unification in
+  Evarsolve.{ modulo_betaiota; open_ts; closed_ts; subterm_ts; allowed_evars;
+              use_pattern_unification; with_cs = true }
 
 let w_unify ~metas env evd cv_pb ?(flags=default_unify_flags ()) ty1 ty2 =
   let hd1,l1 = decompose_app evd (whd_nored ~metas:(Meta.meta_handler metas) env evd ty1) in
