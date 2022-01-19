@@ -88,6 +88,8 @@ let make_prod_evar ctx sigma ~args na t1 t2 =
   let (sigma, evk) = new_pure_evar ~typeclass_candidate:false ctx sigma
       ~relevance:na.binder_relevance t1
   in
+  (* Do not mark any evar as a future goal at this point *)
+  let sigma = Evd.remove_future_goal sigma evk in
   let ev = mkEvar (evk, args) in
   let dep = not (noccurn sigma 1 t2) in
   let hole = {
@@ -568,13 +570,15 @@ let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=
       sigma, clenv_advance sigma clenv
     else sigma, clenv
   in
-  let run sigma =
+  let run shelf sigma =
     (* Declare the future goals here, as they should become subgoals of this refine. *)
     let declare_goal sigma h =
       let ev, _ = destEvar sigma h.hole_evar in
-      Evd.declare_future_goal ev sigma
+      if List.mem_f Evar.equal ev shelf then sigma
+      else Evd.declare_future_goal ev sigma
     in
     let sigma = List.fold_left declare_goal sigma (clenv_holes clenv) in
+    let sigma = Evd.shelve sigma shelf in
     let v = Reductionops.nf_betaiota env sigma (clenv_val clenv) in
     sigma, v
   in
@@ -592,9 +596,13 @@ let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=
   Proofview.Unsafe.tclEVARS sigma <*>
     clenv_check_dep_holes with_evars env sigma ?origsigma clenv >>= (fun deps ->
       let () = debug_clenv (fun () -> Pp.str"Refining the goal") in
-  (Refine.refine ~typecheck:false run) <*>
-  (if shelve_subgoals then shelve_goals deps else tclUNIT ()) <*>
-    Proofview.Goal.enter reduce_goal)
+      let shelf = if shelve_subgoals then deps else [] in
+      (Refine.refine ~typecheck:false (run shelf)) <*>
+      Unsafe.tclGETSHELF >>= fun shelf ->
+      Unsafe.tclGETGOALS >>= fun gls ->
+      let () = debug_clenv Pp.(fun () -> str"New shelf: " ++ prlist_with_sep spc Evar.print shelf ++ fnl ()
+        ++ str "New goals " ++ prlist_with_sep spc (fun x -> Evar.print (drop_state x)) gls) in
+      Proofview.Goal.enter reduce_goal)
   end
 
 let clenv_unify_concl_tac flags clenv k =
