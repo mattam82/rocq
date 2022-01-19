@@ -203,6 +203,19 @@ let define_with_type env sigma ?flags ev c ty =
   let sigma = Evd.define ev j.Environ.uj_val sigma in
   sigma
 
+let warn_unused_with_argument =
+  CWarnings.create ~name:"unused-with-argument" ~category:CWarnings.CoreCategories.tactics
+    Pp.(fun na -> str"Ignoring 'with' argument for binder " ++ Name.print na ++ str", already solved by unification.")
+
+let try_define_with_type env sigma ev c ty =
+  if isEvar sigma ev.hole_evar then
+    define_with_type env sigma ev.hole_evar c ty
+  else
+    (warn_unused_with_argument ev.hole_name; sigma)
+
+let apply_delayed_bindings env delayed sigma =
+  List.fold_right (fun (ev,arg) sigma -> try_define_with_type env sigma ev arg None) delayed sigma
+
 (** This requires to look at the evar even if it is defined *)
 let hole_goal h = h.hole_evar_key
 
@@ -260,7 +273,8 @@ let solve_evar_clause env sigma ~hyps_only clause b =
   let define_if_known_type (sigma,delayed) ev arg =
     let head, _ = decompose_app sigma ev.hole_type in
     if EConstr.isEvar sigma head then
-      (sigma, (ev,arg) :: delayed)
+      (debug_clenv Pp.(fun () -> Pp.str"Delaying instantiation of " ++ Name.print ev.hole_name);
+      (sigma, (ev,arg) :: delayed))
     else
       try
         (define_with_type env sigma ev.hole_evar arg None, delayed)
@@ -617,9 +631,6 @@ let clenv_unify_concl_tac flags clenv k =
         CannotUnify (concl, clenv_concl clenv, Some reason))) in
     Proofview.tclZERO ex
   end
-
-let apply_delayed_bindings env delayed sigma =
-  List.fold_right (fun (ev,arg) sigma -> define_with_type env sigma ev.hole_evar arg None) delayed sigma
 
 let clenv_refine_bindings
     ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true)
