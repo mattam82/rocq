@@ -84,8 +84,13 @@ let error_not_right_number_missing_arguments n =
     Pp.(strbrk "Not the right number of missing arguments (expected " ++
         int n ++ str ").")
 
+let hole_source = function
+  | Anonymous -> Loc.tag Evar_kinds.GoalEvar
+  | Name id   -> Loc.tag @@ Evar_kinds.VarInstance id
+
 let make_prod_evar ctx sigma ~args na t1 t2 =
-  let (sigma, evk) = new_pure_evar ~typeclass_candidate:false ctx sigma
+  let (sigma, evk) = new_pure_evar ~src:(hole_source na.binder_name)
+      ~typeclass_candidate:false ctx sigma
       ~relevance:na.binder_relevance t1
   in
   (* Do not mark any evar as a future goal at this point *)
