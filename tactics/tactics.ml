@@ -1810,6 +1810,8 @@ let progress_with_clause env sigma flags innerclause clause =
   | Some v -> v
   | None -> raise UnableToApply
 
+(* let debug_apply = CDebug.create ~name:"apply" () *)
+
 (* For a clause expressing some lemma [C[?1:T1,...,?n:Tn] : P] and some
    goal [G], [eclause_refine_in] returns [n+1] subgoals, the [n] last
    ones being the [Ti] and the first one being [G] whose hypothesis
@@ -1880,6 +1882,7 @@ let apply_in_once ?(respect_opaque = false) with_delta
         Proofview.Unsafe.tclEVARS sigma <*>
         EClause.clenv_solve_clause_constraints ~flags ~with_ho:true clause >>= fun clause ->
         Proofview.tclEVARMAP >>= fun sigma ->
+        let clause = EClause.clenv_recompute_deps env sigma ~hyps_only:false clause in
         Tacticals.tclTHENFIRST
           (eclause_refine_in with_evars flags targetid replace env sigma origsigma clause)
           cleartac
