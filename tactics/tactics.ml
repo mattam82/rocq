@@ -1850,7 +1850,7 @@ let apply_in_once_main flags env sigma innerclause (loc,d,lbind) =
       | UnableToApply -> TacticErrors.unable_to_apply_lemma ?loc env sigma thm innerclause.EClause.cl_concl
       | _ -> Exninfo.iraise e'
   in
-  let sigma, delayed, clenv = EClause.make_clenv_bindings env sigma ~hyps_only:false (* TODO ?occs *) (d,thm) lbind in
+  let sigma, delayed, clenv = EClause.make_clenv_bindings env sigma ~hyps_only:false (d,thm) lbind in
   let sigma = EClause.apply_delayed_bindings env delayed sigma in
   aux (sigma, clenv)
 
