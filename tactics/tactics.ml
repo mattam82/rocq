@@ -1551,7 +1551,7 @@ let make_projection env sigma params cstr sign elim i n c (ind, u) =
   let open Context.Rel.Declaration in
   let elim = match elim with
   | NotADefinedRecordUseScheme ->
-      (* bugs: goes from right to left when i increases! *)
+      let i = n - succ i in
       let cs_args = cstr.cs_args in
       let decl = List.nth cs_args i in
       let t = RelDecl.get_type decl in
@@ -1603,6 +1603,8 @@ let make_projection env sigma params cstr sign elim i n c (ind, u) =
       | None -> None
   in elim
 
+let debug_tactic = CDebug.create ~name:"tactics" ()
+
 let descend_in_conjunctions avoid tac (err, info) c =
   Proofview.Goal.enter begin fun gl ->
   let env = Proofview.Goal.env gl in
@@ -1629,10 +1631,13 @@ let descend_in_conjunctions avoid tac (err, info) c =
             Proofview.Goal.enter begin fun gl ->
             let env = Proofview.Goal.env gl in
             let sigma = Proofview.Goal.sigma gl in
+            debug_tactic Pp.(fun () -> str"Trying constructor argument: " ++ int i);
             match make_projection env sigma params cstr sign elim i n c (ind, u) with
             | None ->
+              debug_tactic Pp.(fun () -> str"Trying constructor argument: " ++ int i ++ str" failed");
               Proofview.tclZERO ~info err
             | Some (sigma, p, pt) ->
+              debug_tactic Pp.(fun () -> str"Trying constructor argument: " ++ Printer.pr_econstr_env env sigma pt);
               Proofview.Unsafe.tclEVARS sigma <*>
               Tacticals.tclTHENS
                 (Proofview.tclORELSE
@@ -1817,13 +1822,17 @@ let progress_with_clause env sigma flags innerclause clause =
    ones being the [Ti] and the first one being [G] whose hypothesis
    [id] is replaced by P *)
 
+let solve_typeclasses with_evars with_classes =
+  let open Proofview in
+  if with_classes then
+    tclENV >>= fun env ->
+    tclEVARMAP >>= fun sigma ->
+    try let sigma = Typeclasses.resolve_typeclasses ~fail:(not with_evars) env sigma in
+        Unsafe.tclEVARS sigma
+    with e when noncritical e -> tclZERO e
+  else tclIDTAC
+
 let eclause_refine_in ?(with_classes=true) with_evars flags targetid replace env sigma origsigma clenv =
-  let sigma =
-    if with_classes then
-      Typeclasses.resolve_typeclasses ~fail:(not with_evars) env sigma
-    else sigma
-  in
-  let clenv = EClause.clenv_advance sigma clenv in
   (* For compatibility: reduce the conclusion *)
   let clenv = EClause.clenv_map_concl (Reductionops.nf_betaiota env sigma) clenv in
   let exact_tac =
@@ -1883,6 +1892,9 @@ let apply_in_once ?(respect_opaque = false) with_delta
         EClause.clenv_solve_clause_constraints ~flags ~with_ho:true clause >>= fun clause ->
         Proofview.tclEVARMAP >>= fun sigma ->
         let clause = EClause.clenv_recompute_deps env sigma ~hyps_only:false clause in
+        solve_typeclasses with_evars true <*>
+        Proofview.tclEVARMAP >>= fun sigma ->
+        let clause = EClause.clenv_advance sigma clause in
         Tacticals.tclTHENFIRST
           (eclause_refine_in with_evars flags targetid replace env sigma origsigma clause)
           cleartac
