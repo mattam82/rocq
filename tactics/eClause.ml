@@ -649,7 +649,7 @@ let clenv_refine_bindings
     let sigma, delayed, clenv =
       solve_evar_clause env sigma ~hyps_only clenv b
     in
-    debug_clenv (fun () -> Pp.str"Solved evar clause");
+    debug_clenv Pp.(fun () -> str"Solved evar clause" ++ pr_clause env sigma clenv);
     (Unsafe.tclEVARS sigma) <*>
     (clenv_unify_concl_tac flags clenv
       (fun (sigma, clenv) ->
