@@ -583,7 +583,7 @@ let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=
       let sigma = Typeclasses.resolve_typeclasses ~filter:Typeclasses.all_evars
         (* Don't split as this can result in typeclasses not failing due
            to initial holes not being marked as "mandatory". *)
-        ~fail:(false) env sigma
+        ~fail:(not with_evars) env sigma
       in
       let sigma = Evd.set_typeclass_evars sigma tcs in
       sigma, clenv_advance sigma clenv
