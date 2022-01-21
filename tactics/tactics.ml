@@ -1551,7 +1551,7 @@ let make_projection env sigma params cstr sign elim i n c (ind, u) =
   let open Context.Rel.Declaration in
   let elim = match elim with
   | NotADefinedRecordUseScheme ->
-      let i = n - succ i in
+      (* bugs: goes from right to left when i increases! *)
       let cs_args = cstr.cs_args in
       let decl = List.nth cs_args i in
       let t = RelDecl.get_type decl in
