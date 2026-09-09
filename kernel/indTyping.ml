@@ -575,7 +575,7 @@ let typecheck_inductive env ~sec_univs (mie:mutual_inductive_entry) =
         | None -> None
         | Some variances ->
           (* no variance for qualities *)
-          let _qualities, univs = LevelInstance.to_array @@ UContext.instance (AbstractContext.repr uctx) in
+          let _qualities, univs = LevelInstance.to_array @@ UContext.instance (AbstractContext.repr auctx) in
           let univs =
             match variances with
             | Infer_variances -> Array.map (fun a -> a, None) univs
@@ -618,4 +618,4 @@ let typecheck_inductive env ~sec_univs (mie:mutual_inductive_entry) =
   in
   let data = List.map map data in
 
-  env_ar_par, univs, template, record, not_prim_reason_or_has_eta, params, Array.of_list data
+  env_ar_par, univs, record, not_prim_reason_or_has_eta, params, Array.of_list data
