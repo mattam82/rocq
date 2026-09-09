@@ -711,7 +711,7 @@ let ssrinstancesofrule ist dir arg =
     let rpats = List.fold_left rpat (empty_tpatterns r_sigma) rules in
     find_all_instances sigma0 rpats
   in
-  let print env p c _ = Feedback.msg_info Pp.(hov 1 (str"instance:" ++ spc() ++ pr_econstr_env env r_sigma p ++ spc() ++ str "matches:" ++ spc() ++ pr_econstr_env env r_sigma c)); c in
+  let print env _ p c _ = Feedback.msg_info Pp.(hov 1 (str"instance:" ++ spc() ++ pr_econstr_env env r_sigma p ++ spc() ++ str "matches:" ++ spc() ++ pr_econstr_env env r_sigma c)); c in
   let () = Feedback.msg_info Pp.(str"BEGIN INSTANCES") in
   let () = find env0 (Reductionops.nf_evar sigma0 concl0) 1 ~k:print in
   let () = Feedback.msg_info Pp.(str"END INSTANCES") in

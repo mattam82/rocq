@@ -457,10 +457,10 @@ let get_template template_context default_univs params arity lc =
 
   (* don't forget to check the default_univs qualities are all QType *)
   let () =
-    let () = if not UVars.(eq_sizes (AbstractContext.size template_context) (Instance.length default_univs))
+    let () = if not UVars.(eq_sizes (AbstractContext.size template_context) (LevelInstance.length default_univs))
       then CErrors.anomaly Pp.(str "Incorrect default template universes declaration.")
     in
-    let default_qs, _ = UVars.Instance.to_array default_univs in
+    let default_qs, _ = UVars.LevelInstance.to_array default_univs in
     assert (Array.for_all Sorts.Quality.is_qtype default_qs)
   in
 
@@ -515,24 +515,24 @@ let typecheck_inductive env ~sec_univs (mie:mutual_inductive_entry) =
   (* Abstract universes *)
   let env_univs, usubst, univs, template = match mie.mind_entry_universes with
   | Monomorphic_ind_entry ->
-    env, UVars.empty_sort_subst, Monomorphic, None
+    env, UVars.empty_sort_subst, None, None
   | Template_ind_entry { uctx; default_univs } ->
     let () =
       let bind_instance = UVars.UContext.instance uctx in
-      let _, bind_us = UVars.Instance.to_array bind_instance in
+      let _, bind_us = UVars.LevelInstance.to_array bind_instance in
       (* XXX should be checked by UVars.abstract_universes instead *)
       assert (Array.for_all (fun bind_u -> not @@ Level.is_set bind_u) bind_us)
     in
     let (inst, auctx) = UVars.abstract_universes uctx in
     let usubst = UVars.make_instance_subst inst in
     let env = Environ.Internal.push_template_context (AbstractContext.repr auctx) env in
-    env, usubst, Monomorphic, Some (default_univs, auctx)
+    env, usubst, None, Some (default_univs, auctx)
   | Polymorphic_ind_entry (uctx, variances) ->
     let (inst, auctx) = UVars.abstract_universes uctx in
     let usubst = UVars.make_instance_subst inst in
     let () = check_ucontext (AbstractContext.repr auctx) env in
     let env = Environ.push_context (AbstractContext.repr auctx) env in
-    env, usubst, Polymorphic (auctx, variances), None
+    env, usubst, Some (auctx, variances), None
   in
 
   let params = Vars.subst_univs_level_context usubst mie.mind_entry_params in
@@ -604,12 +604,13 @@ let typecheck_inductive env ~sec_univs (mie:mutual_inductive_entry) =
 
   let univs, sec_variance =
       match univs with
-      | Monomorphic -> 
+      | None -> 
         begin match template with
         | None -> Polymorphic Declareops.empty_universes, None
-        | Some templ -> Template templ
+        | Some templ -> Template templ, None
         end
-      | Polymorphic (auctx, variance) ->
+      | Some (auctx, variance) ->
+        assert (Option.is_empty template);
         let variance, sec_variance = match variance with
         | None -> None, None
         | Some variances ->
@@ -642,6 +643,5 @@ let typecheck_inductive env ~sec_univs (mie:mutual_inductive_entry) =
     let arity = { user_arity = arity; sort = univs.ind_univ } in
     ((arity, lc), b, univs.ind_squashed, relies_on_indices_not_mattering)
   in
-  let data = List.map map data in
-  let sec_univs = match sec_univs with None -> [] | Some l -> l in
+  let data = List.map map data in  
   env_ar_par, hyps, sec_univs, univs, sec_variance, record, not_prim_reason_or_has_eta, params, Array.of_list data
