@@ -10,7 +10,7 @@ End SP.
 Module Poly.
   Set Universe Polymorphism.
   Unset Collapse Sorts ToType.
-
+  Unset Polymorphic Inductive Cumulativity.
   Inductive pTrue : Type := pI.
 
   (* sanity check instance length *)
