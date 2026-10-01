@@ -32,6 +32,8 @@ val of_univ_poly : bool -> t
 val univ_poly : t -> bool
 val collapse_sort_variables : t -> bool
 val cumulative : t -> bool
+val cumulative_inference : t -> bool
+val set_noncumulative_inference : t -> t
 
 val set_solve_term_variables : t -> t
 val solve_term_variables : t -> bool

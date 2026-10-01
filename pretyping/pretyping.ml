@@ -485,10 +485,10 @@ let adjust_evar_source sigma na c =
   | _, _ -> sigma, c
 
 (* coerce to tycon if any *)
-let inh_conv_coerce_to_tycon ?loc ~flags:{ program_mode; resolve_tc; use_coercions; } env sigma j = function
+let inh_conv_coerce_to_tycon ?loc ~flags:{ program_mode; resolve_tc; use_coercions; poly } env sigma j = function
   | None -> sigma, j, Some Coercion.empty_coercion_trace
   | Some t ->
-    Coercion.inh_conv_coerce_to ?loc ~program_mode ~resolve_tc ~use_coercions !!env sigma j t
+    Coercion.inh_conv_coerce_to ?loc ~cumulative_inference:(PolyFlags.cumulative_inference poly) ~program_mode ~resolve_tc ~use_coercions !!env sigma j t
 
 let check_instance subst = function
   | [] -> ()
@@ -1459,7 +1459,7 @@ struct
   let pretype_cases self (sty, po, tml, eqns)  =
     fun ?loc ~flags tycon env sigma ->
     let pretype tycon env sigma c = eval_pretyper self ~flags tycon env sigma c in
-    Cases.compile_cases ?loc ~program_mode:flags.program_mode sty (pretype, sigma) tycon env (po,tml,eqns)
+    Cases.compile_cases ?loc ~cumulative_inference:(PolyFlags.cumulative_inference flags.poly) ~program_mode:flags.program_mode sty (pretype, sigma) tycon env (po,tml,eqns)
 
   let warn_nonbool_if =
     let quickfix ~loc:_ (cloc, ctor) =

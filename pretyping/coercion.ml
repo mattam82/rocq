@@ -715,8 +715,11 @@ let inh_coerce_to_fail ?(use_coercions=true) flags env sigma rigidonly v v_ty ta
       | Some (sigma, r, _) -> (sigma, r, ReplaceCoe r)
       | None -> Exninfo.iraise (NoCoercion,info)
 
-let rec inh_conv_coerce_to_fail ?loc ?use_coercions env sigma ?(flags=default_flags_of env) rigidonly v t c1 =
-  try (unify_leq_delay ~flags env sigma t c1, v, IdCoe)
+let rec inh_conv_coerce_to_fail ?loc ~cumulative_inference ?use_coercions env sigma ?(flags=default_flags_of env) rigidonly v t c1 =
+  try 
+    let sigma = if cumulative_inference then unify_leq_delay ~flags env sigma t c1
+      else unify_delay ~flags env sigma t c1
+    in sigma, v, IdCoe
   with UnableToUnify (best_failed_sigma,e) as exn ->
     let _, info = Exninfo.capture exn in
     try inh_coerce_to_fail ?use_coercions flags env sigma rigidonly v t c1
@@ -738,21 +741,21 @@ let rec inh_conv_coerce_to_fail ?loc ?use_coercions env sigma ?(flags=default_fl
           let open Context.Rel.Declaration in
           let env1 = push_rel (LocalAssum (name,u1)) env in
           let (sigma, v1, trace1) =
-            inh_conv_coerce_to_fail ?loc ?use_coercions env1 sigma rigidonly
+            inh_conv_coerce_to_fail ?loc ~cumulative_inference ?use_coercions env1 sigma rigidonly
               (mkRel 1) (lift 1 u1) (lift 1 t1) in
           let v2 = beta_applist sigma (lift 1 v,[v1]) in
           let t2 = Retyping.get_type_of env1 sigma v2 in
-          let (sigma,v2',trace2) = inh_conv_coerce_to_fail ?loc ?use_coercions env1 sigma rigidonly v2 t2 u2 in
+          let (sigma,v2',trace2) = inh_conv_coerce_to_fail ?loc ~cumulative_inference ?use_coercions env1 sigma rigidonly v2 t2 u2 in
           let trace = ProdCoe { na=name; ty=u1; dom=trace1; body=trace2 } in
           (sigma, mkLambda (name, u1, v2'), trace)
       | _ ->
         Exninfo.iraise (NoCoercionNoUnifier (best_failed_sigma,e), info)
 
 (* Look for cj' obtained from cj by inserting coercions, s.t. cj'.typ = t *)
-let inh_conv_coerce_to_gen ?loc ~program_mode ~resolve_tc ?use_coercions rigidonly env sigma ?(flags=default_flags_of env) cj t =
+let inh_conv_coerce_to_gen ?loc ~cumulative_inference ~program_mode ~resolve_tc ?use_coercions rigidonly env sigma ?(flags=default_flags_of env) cj t =
   let (sigma, val', otrace) =
     try
-      let (sigma, val', trace) = inh_conv_coerce_to_fail ?loc ?use_coercions env sigma ~flags rigidonly cj.uj_val cj.uj_type t in
+      let (sigma, val', trace) = inh_conv_coerce_to_fail ?loc ~cumulative_inference ?use_coercions env sigma ~flags rigidonly cj.uj_val cj.uj_type t in
       (sigma, val', Some trace)
     with NoCoercionNoUnifier (best_failed_sigma,e) as exn ->
       let _, info = Exninfo.capture exn in
@@ -773,7 +776,7 @@ let inh_conv_coerce_to_gen ?loc ~program_mode ~resolve_tc ?use_coercions rigidon
               error_actual_type ?loc ~info env best_failed_sigma cj t e
             else
               let sigma = sigma' in
-              let (sigma, val', trace) = inh_conv_coerce_to_fail ?loc ?use_coercions env sigma rigidonly cj.uj_val cj.uj_type t in
+              let (sigma, val', trace) = inh_conv_coerce_to_fail ?loc ~cumulative_inference ?use_coercions env sigma rigidonly cj.uj_val cj.uj_type t in
               (sigma, val', Some trace)
           with NoCoercionNoUnifier (_sigma,_error) as exn ->
             let _, info = Exninfo.capture exn in
@@ -781,15 +784,15 @@ let inh_conv_coerce_to_gen ?loc ~program_mode ~resolve_tc ?use_coercions rigidon
   in
   (sigma,{ uj_val = val'; uj_type = t },otrace)
 
-let inh_conv_coerce_to_gen ?loc ~program_mode ~resolve_tc ?use_coercions rigidonly env sigma ?flags cj t =
-  try inh_conv_coerce_to_gen ?loc ~program_mode ~resolve_tc ?use_coercions rigidonly env sigma ?flags cj t
+let inh_conv_coerce_to_gen ?loc ~cumulative_inference ~program_mode ~resolve_tc ?use_coercions rigidonly env sigma ?flags cj t =
+  try inh_conv_coerce_to_gen ?loc ~cumulative_inference ~program_mode ~resolve_tc ?use_coercions rigidonly env sigma ?flags cj t
   with e when Option.has_some loc ->
     let _, info as iexn = Exninfo.capture e in
     match Loc.get_loc info with
     | Some _ -> Exninfo.iraise iexn
     | None -> Exninfo.iraise (e, Loc.add_loc info (Option.get loc))
 
-let inh_conv_coerce_to ?loc ~program_mode ~resolve_tc ?use_coercions env sigma ?flags =
-  inh_conv_coerce_to_gen ?loc ~program_mode ~resolve_tc ?use_coercions false ?flags env sigma
-let inh_conv_coerce_rigid_to ?loc ~program_mode ~resolve_tc ?use_coercions env sigma ?flags =
-  inh_conv_coerce_to_gen ?loc ~program_mode ~resolve_tc ?use_coercions true ?flags env sigma
+let inh_conv_coerce_to ?loc ~cumulative_inference ~program_mode ~resolve_tc ?use_coercions env sigma ?flags =
+  inh_conv_coerce_to_gen ?loc ~cumulative_inference ~program_mode ~resolve_tc ?use_coercions false ?flags env sigma
+let inh_conv_coerce_rigid_to ?loc ~cumulative_inference ~program_mode ~resolve_tc ?use_coercions env sigma ?flags =
+  inh_conv_coerce_to_gen ?loc ~cumulative_inference ~program_mode ~resolve_tc ?use_coercions true ?flags env sigma

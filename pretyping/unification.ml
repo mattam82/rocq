@@ -1782,7 +1782,8 @@ let is_mimick_head sigma ts f =
 
 let try_to_coerce ~metas env evd c cty tycon =
   let j = make_judge c cty in
-  let (evd',j',_trace) = Coercion.inh_conv_coerce_rigid_to ~program_mode:false ~resolve_tc:true env evd j tycon in
+  (* FIXME always cumulative *)
+  let (evd',j',_trace) = Coercion.inh_conv_coerce_rigid_to ~cumulative_inference:true ~program_mode:false ~resolve_tc:true env evd j tycon in
   let evd' = Evarconv.solve_unif_constraints_with_heuristics env evd' in
   let metas = Meta.map_metas_fvalue (fun c -> nf_evar evd' c) metas in
   (evd', metas, j'.uj_val)

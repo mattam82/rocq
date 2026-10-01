@@ -44,11 +44,11 @@ val remove_subset : env -> evar_map -> types -> types
     applicable. resolve_tc=false disables resolving type classes (as the last
     resort before failing) *)
 
-val inh_conv_coerce_to : ?loc:Loc.t -> program_mode:bool -> resolve_tc:bool ->
+val inh_conv_coerce_to : ?loc:Loc.t -> cumulative_inference:bool -> program_mode:bool -> resolve_tc:bool ->
   ?use_coercions:bool -> env -> evar_map -> ?flags:Evarconv.unify_flags ->
   unsafe_judgment -> types -> evar_map * unsafe_judgment * coercion_trace option
 
-val inh_conv_coerce_rigid_to : ?loc:Loc.t -> program_mode:bool -> resolve_tc:bool ->
+val inh_conv_coerce_rigid_to : ?loc:Loc.t -> cumulative_inference:bool -> program_mode:bool -> resolve_tc:bool ->
   ?use_coercions:bool -> env -> evar_map -> ?flags:Evarconv.unify_flags ->
   unsafe_judgment -> types -> evar_map * unsafe_judgment * coercion_trace option
 
