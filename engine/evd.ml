@@ -1241,6 +1241,9 @@ let collapse_sort_variables ?except ~only_above_prop evd =
   let universes = UState.collapse_sort_variables ?except ~only_above_prop evd.universes in
   { evd with universes }
 
+let minimize_levels levels evd =
+  { evd with universes = UState.minimize_levels levels evd.universes }
+
 let minimize_universes_no_collapse ~partial ?(solve_term=false) evd =
   let uctx' = UState.normalize_variables evd.universes in
   let uctx' = UState.minimize ~partial ~solve_term uctx' in

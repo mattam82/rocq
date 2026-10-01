@@ -254,6 +254,8 @@ val set_variances : t -> InferCumulativity.variances -> t
 *)
 val minimize : partial:bool -> ?solve_term:bool -> t -> t
 
+val minimize_levels : Univ.Level.Set.t -> t -> t
+
 val collapse_sort_variables : ?except:QVar.Set.t -> only_above_prop:bool -> t -> t
 
 type ('a, 'b, 'c, 'd, 'e) gen_universe_decl = {

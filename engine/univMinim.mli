@@ -57,6 +57,7 @@ val set_variance : InferCumulativity.variances -> Level.t -> InferCumulativity.i
 
 val normalize_context_set :
   solve_flexibles:bool ->
+  only_above:bool -> (* Only minimize to 0 variables that have been constrained explicitly *)
   solve_term:bool ->
   (* Solve flexibles appearing in term position, if they are irrelevant for the type *)
   variances:InferCumulativity.variances ->

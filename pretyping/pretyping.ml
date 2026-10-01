@@ -68,6 +68,10 @@ let clear_bidirectionality_hint env gr =
   let open Summary.Ref in
   bidi_hints := GlobRefMap.remove env gr !bidi_hints
 
+let { Goptions.get = local_minimization } =
+  Goptions.declare_bool_option_and_ref ~key:["Local";"Minimization"] ~value:false ()
+
+
 (************************************************************************)
 (* This concerns Cases *)
 open Inductive
@@ -1234,6 +1238,30 @@ struct
       | Some trace ->
         let resj = { resj with uj_val = t } in
         { resj with uj_val = Coercion.reapply_coercions sigma trace t }
+    in
+    let sigma =
+      if not @@ local_minimization () then sigma 
+      else try
+        let (gr, u) = destRef sigma fj.uj_val in
+        match variances !!env gr with
+        | None -> sigma
+        | Some vs ->
+          let occs = UVars.Variances.repr vs in
+          let ui = EInstance.kind sigma u in
+          let _qs, us = UVars.Instance.to_array ui in
+          let application = UVars.NumArgs length in
+          assert (Array.length occs = Array.length us);
+          let minim u v acc = 
+            match Univ.Universe.level u with
+            | Some lev ->
+              let input, _ = UVars.VarianceOccurrence.typing_and_cumul_variance_app ~with_type:true application v in
+              if input then Univ.Level.Set.add lev acc else acc
+            | None -> acc
+          in
+          let to_minimize = Array.fold_right2 minim us occs Univ.Level.Set.empty in
+          (* Feedback.msg_debug (Pp.str "Minimizing levels for " ++ GlobRef.print gr ++ Pp.str ": " ++ Univ.Level.Set.pr Univ.Level.raw_pr to_minimize); *)
+          Evd.minimize_levels to_minimize sigma
+      with DestKO -> sigma
     in
     (sigma, resj)
 

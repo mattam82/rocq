@@ -583,7 +583,11 @@ let pr ?(local=false) ctx =
        (pr_opt (fun variances -> str"VARIANCES:"++brk(0,1)++
        h (InferCumulativity.pr_variances Univ.Level.raw_pr variances) ++ fnl ()) ctx.variances) ++
        str "WEAK CONSTRAINTS:"++brk(0,1)++
-       h (pr_weak prl ctx) ++ fnl ())
+       h (pr_weak prl ctx) ++ fnl () ++
+       str "ABOVE PROP:"++brk(0,1)++
+       h (Level.Set.pr prl ctx.minim_extra.above_prop) ++ fnl () ++
+       str "ABOVE SET:"++brk(0,1)++
+       h (Level.Set.pr prl ctx.minim_extra.above_zero) ++ fnl ())
 
 let filter_set_constraints cstrs =
   UnivConstraints.filter (fun (l, d, r) -> not (Universe.is_type0 l && d == Le)) cstrs
@@ -2028,7 +2032,7 @@ let minimize
     let variances = update_variances_qvars uctx.sort_variables variances in
     let local_variables, flexible_variables, variances, universes =
       normalize_context_set ~solve_flexibles:uctx.fixed_rigid_universes
-        ~solve_term
+        ~only_above:false ~solve_term
         ~variances ~partial uctx.universes
         ~local_variables:uctx.local_variables
         ~flexible_variables:uctx.flexible_variables
@@ -2046,6 +2050,37 @@ let minimize
       initial_universes = uctx.initial_universes;
       variances = Some variances;
       minim_extra = UnivMinim.empty_extra; (* weak constraints are consumed *) }
+
+
+let minimize_levels levels uctx = 
+  let open UnivMinim in
+  let variances = Univ.Level.Map.empty in
+  if Univ.Level.Set.is_empty levels then uctx else
+  let flex = Univ.Level.Set.inter levels uctx.flexible_variables in
+  let other = Univ.Level.Set.diff uctx.flexible_variables levels in
+  let local_variables, flexible_variables, variances, universes =
+    normalize_context_set ~solve_flexibles:false
+      ~only_above:true ~solve_term:false
+      ~variances ~partial:true uctx.universes
+      ~local_variables:uctx.local_variables
+      ~flexible_variables:flex
+      ~binders:(fst uctx.names)
+      { uctx.minim_extra with UnivMinim.weak_constraints = UPairSet.empty }
+  in
+  { names = uctx.names;
+      local = uctx.local;
+      local_variables = local_variables;
+      demoted_local_context = uctx.demoted_local_context;
+      flexible_variables = Univ.Level.Set.union flexible_variables other;
+      fixed_rigid_universes = uctx.fixed_rigid_universes;
+      fixed_rigid_constraints = uctx.fixed_rigid_constraints;
+      sort_variables = uctx.sort_variables;
+      universes;
+      initial_universes = uctx.initial_universes;
+      variances = uctx.variances;
+      minim_extra = uctx.minim_extra; (* weak constraints are consumed *) }
+
+
 
 let universe_context_inst_decl decl qvars levels names =
   let leftqs = List.fold_left (fun acc l -> QSet.remove l acc) qvars decl.univdecl_qualities in
