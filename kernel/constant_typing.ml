@@ -24,6 +24,8 @@ open UVars
 
 module NamedDecl = Context.Named.Declaration
 
+type sec_univs = (bool * UVars.UContext.t list) option
+
 (* Checks the section variables for the body.
    Returns the closure of the union with the variables in the type.
 *)
@@ -113,7 +115,7 @@ let compute_section_universes ctx body typ =
 let _used_section_universes sec_univs univs ctx body typ =
   match sec_univs with
   | None -> []
-  | Some sec_univs -> (* sec_univs represents all universes quantified in enclosing sections *)
+  | Some (_has_poly, sec_univs) -> (* sec_univs represents all universes quantified in enclosing sections *)
     let uctx = match univs with
     | Entries.Monomorphic_entry -> UContext.empty
     | Entries.Polymorphic_entry (uctx, _) -> uctx
@@ -125,7 +127,12 @@ let _used_section_universes sec_univs univs ctx body typ =
 
 let process_universes env ?sec_univs = function
   | Entries.Monomorphic_entry ->
-    env, UVars.empty_sort_subst, UVars.Instance.empty, PreMonomorphic
+    (match sec_univs with
+     | Some (true, _) -> 
+      CErrors.user_err
+        Pp.(str "Cannot add a universe monomorphic declaration when \
+                 section polymorphic universes are present.")
+     | _ -> env, UVars.empty_sort_subst, UVars.Instance.empty, PreMonomorphic)
   | Entries.Polymorphic_entry (uctx, variances) ->
     if UContext.is_empty uctx && Option.is_empty sec_univs then
       env, UVars.empty_sort_subst, UVars.Instance.empty,
