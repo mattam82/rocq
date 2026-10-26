@@ -173,10 +173,22 @@ type flex_kind_of_term =
 
 let has_arg s = Option.has_some (Stack.strip_n_app 0 s)
 
+(* In tactic mode, constants and variables declared opaque in the conversion
+   oracle are not unfolded as heads of unification problems, as [w_unify]
+   did (see [Unification.key_of]); they are still unfolded by conversion on
+   closed terms and to expose iota-redexes. *)
+let is_opaque_head flags env evd c =
+  flags.presolve_evar_args &&
+  match EConstr.kind evd c with
+  | Const (c, _) -> not (Reductionops.is_transparent env (Evaluable.EvalConstRef c))
+  | Var id -> not (Reductionops.is_transparent env (Evaluable.EvalVarRef id))
+  | _ -> false
+
 let flex_kind_of_term flags env evd c sk =
   match EConstr.kind evd c with
     | LetIn _ | Rel _ | Const _ | Var _ | Proj _ ->
-      Option.cata (fun x -> MaybeFlexible x) Rigid (eval_flexible_term flags.open_ts env evd c sk)
+      if is_opaque_head flags env evd c then Rigid
+      else Option.cata (fun x -> MaybeFlexible x) Rigid (eval_flexible_term flags.open_ts env evd c sk)
     | Lambda _ when has_arg sk ->
        if flags.modulo_betaiota then MaybeFlexible (c, sk)
        else Rigid
@@ -1354,6 +1366,26 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) flags env evd pbty
         eta_lambda env evd false term2 (term1,sk1)
 
     | Rigid, Rigid -> begin
+        (* In tactic mode, as [w_unify] did in [unify_app], applications with
+           the same number of arguments but different rigid heads are unified
+           by converting the heads on closed terms (e.g. an opaque constant
+           eta-convertible to a constructor) and unifying the arguments. *)
+        let heads_conv_fallback r = match r with
+          | UnifFailure (_, NotSameHead)
+            when flags.presolve_evar_args
+              && Int.equal (Stack.args_size sk1) (Stack.args_size sk2)
+              && not (Stack.is_empty sk1)
+              && is_ground_term evd term1 && is_ground_term evd term2
+              && not (isConstruct evd term1 && isConstruct evd term2) ->
+            ise_and evd
+              [(fun i ->
+                 match infer_conv_noticing_evars ~pb:CONV ~ts:flags.closed_ts env i term1 term2 with
+                 | Some r -> r
+                 | None -> UnifFailure (i, NotSameHead));
+               (fun i -> exact_ise_stack2 env i (evar_conv_x flags) sk1 sk2)]
+          | r -> r
+        in
+        heads_conv_fallback @@
         match EConstr.kind evd term1, EConstr.kind evd term2 with
 
         | Sort s1, Sort s2 when app_empty ->
