@@ -1822,16 +1822,6 @@ let progress_with_clause env sigma flags innerclause clause =
    ones being the [Ti] and the first one being [G] whose hypothesis
    [id] is replaced by P *)
 
-let solve_typeclasses with_evars with_classes =
-  let open Proofview in
-  if with_classes then
-    tclENV >>= fun env ->
-    tclEVARMAP >>= fun sigma ->
-    try let sigma = Typeclasses.resolve_typeclasses ~fail:(not with_evars) env sigma in
-        Unsafe.tclEVARS sigma
-    with e when noncritical e -> tclZERO e
-  else tclIDTAC
-
 let eclause_refine_in ?(with_classes=true) with_evars flags targetid replace env sigma origsigma clenv =
   (* For compatibility: reduce the conclusion *)
   let clenv = EClause.clenv_map_concl (Reductionops.nf_betaiota env sigma) clenv in
@@ -1886,17 +1876,19 @@ let apply_in_once ?(respect_opaque = false) with_delta
       if with_delta then default_unify_flags () else default_no_delta_unify_flags ts in
     try
       let sigma, clause = apply_in_once_main flags env origsigma innerclause (loc,c,lbind) in
+      (* The remaining checks are performed eagerly so that failures can be
+         caught below and [descend_in_conjunctions] tried, as with the
+         meta-based implementation. *)
+      let sigma =
+        Evarconv.solve_unif_constraints_with_heuristics env
+          ~flags:(Unification.flags_of flags) ~with_ho:true sigma in
+      let clause = EClause.clenv_advance sigma clause in
+      let clause = EClause.clenv_recompute_deps env sigma ~hyps_only:false clause in
+      let sigma = Typeclasses.resolve_typeclasses ~fail:(not with_evars) env sigma in
+      let clause = EClause.clenv_advance sigma clause in
+      let () = if not with_evars then EClause.check_dep_holes env sigma ~origsigma clause in
       let cleartac = apply_clear_request clear_flag false idc <*> clear idstoclear in
       let refine =
-        Proofview.Unsafe.tclEVARS sigma <*>
-        EClause.clenv_solve_clause_constraints ~flags ~with_ho:true clause >>= fun clause ->
-        Proofview.tclEVARMAP >>= fun sigma ->
-        (* Holes appearing only in the conclusion of the new hypothesis are
-           turned into goals, as with the meta-based implementation. *)
-        let clause = EClause.clenv_recompute_deps env sigma ~hyps_only:true clause in
-        solve_typeclasses with_evars true <*>
-        Proofview.tclEVARMAP >>= fun sigma ->
-        let clause = EClause.clenv_advance sigma clause in
         Tacticals.tclTHENFIRST
           (eclause_refine_in with_evars flags targetid replace env sigma origsigma clause)
           cleartac

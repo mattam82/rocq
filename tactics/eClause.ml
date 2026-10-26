@@ -468,15 +468,15 @@ let clenv_unify_type env sigma flags hole occs ty =
      let npbs = List.length (Evd.conv_pbs sigma) in
      match Evarconv.evar_conv_x flags env sigma Conversion.CUMUL hole ty with
      | Success sigma' ->
-        (* Only try to solve the unification problems introduced by this
-           unification: the goal may already carry postponed problems that
-           cannot be solved yet, which the meta-based implementation never
-           looked at. *)
-        if List.length (Evd.conv_pbs sigma') <= npbs then sigma'
-        else
         (try Evarconv.solve_unif_constraints_with_heuristics
                ~flags ~with_ho:false env sigma'
-         with e when CErrors.noncritical e -> ho ())
+         with e when CErrors.noncritical e ->
+           (* The goal may already carry postponed problems that cannot be
+              solved yet, which the meta-based implementation never looked
+              at: this is not a failure of this unification if it
+              introduced no new problem. *)
+           if List.length (Evd.conv_pbs sigma') <= npbs then sigma'
+           else ho ())
      | UnifFailure _ -> ho ()
 
 
@@ -582,23 +582,29 @@ let dft = Unification.default_unify_flags
 let holes_goals sigma holes =
   List.map (fun h -> fst (destEvar sigma h.hole_evar)) holes
 
+let unresolved_dep_holes sigma ?origsigma clenv =
+  let holes = clenv_dep_holes clenv in
+  match origsigma with
+  | None -> holes
+  | Some origsigma ->
+     let origevars = Evar.Map.domain (Evd.undefined_map origsigma) in
+     let filter h =
+       not (Evar.Set.mem (fst (destEvar sigma h.hole_evar)) (Evarutil.reachable_from_evars sigma origevars)) in
+     List.filter filter holes
+
+let check_dep_holes env sigma ?origsigma clenv =
+  match unresolved_dep_holes sigma ?origsigma clenv with
+  | [] -> ()
+  | holes ->
+    raise (Logic.RefinerError (env, sigma, Logic.UnresolvedBindings
+                                 (List.map (fun h -> h.hole_name) holes)))
+
 let clenv_check_dep_holes with_evars env sigma ?origsigma clenv =
   let holes = clenv_dep_holes clenv in
   if not with_evars then
-    let holes' =
-      match origsigma with
-      | None -> holes
-      | Some origsigma ->
-         let origevars = Evar.Map.domain (Evd.undefined_map origsigma) in
-         let filter h =
-           not (Evar.Set.mem (fst (destEvar sigma h.hole_evar)) (Evarutil.reachable_from_evars sigma origevars)) in
-         List.filter filter holes
-    in
-     if not (List.is_empty holes') then
-       Proofview.tclZERO
-         (Logic.RefinerError (env, sigma, Logic.UnresolvedBindings
-                                (List.map (fun h -> h.hole_name) holes')))
-     else Proofview.tclUNIT (holes_goals sigma holes)
+    match check_dep_holes env sigma ?origsigma clenv with
+    | () -> Proofview.tclUNIT (holes_goals sigma holes)
+    | exception (Logic.RefinerError _ as e) -> Proofview.tclZERO e
   else Proofview.tclUNIT (holes_goals sigma holes)
 
 let clenv_solve_clause_constraints ?(flags=dft ()) ~with_ho clenv =

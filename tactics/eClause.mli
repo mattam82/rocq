@@ -236,6 +236,9 @@ val clenv_solve_clause_constraints :
     and advance the clause according to their solution. Fails if there remains
     unsolvable unification constraints. *)
 
+val check_dep_holes : Environ.env -> Evd.evar_map -> ?origsigma:Evd.evar_map -> clause -> unit
+(** Raise [Logic.RefinerError] if dependent holes remain, see [clenv_check_dep_holes]. *)
+
 val clenv_check_dep_holes : bool -> Environ.env -> Evd.evar_map -> ?origsigma:Evd.evar_map ->
                             clause -> Evar.t list Proofview.tactic
 (** Check that dependent holes do not remain if the bool is false,

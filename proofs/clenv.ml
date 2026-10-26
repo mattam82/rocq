@@ -1134,7 +1134,18 @@ let unify ?(flags=fail_quick_unif_flags) ?(with_ho=true) ~cv_pb m =
     let concl = Proofview.Goal.concl gl in
     try
       let flags = Unification.flags_of flags in
-      let sigma = Evarconv.unify ~flags ~with_ho env sigma cv_pb m concl in
+      let npbs = List.length (Evd.conv_pbs sigma) in
+      let sigma = match Evarconv.evar_conv_x flags env sigma cv_pb m concl with
+      | Evarsolve.Success sigma' ->
+        (try Evarconv.solve_unif_constraints_with_heuristics ~flags ~with_ho env sigma'
+         with e when CErrors.noncritical e ->
+           (* The goal may already carry postponed problems that cannot be
+              solved yet: this is not a failure of this unification if it
+              introduced no new problem. *)
+           if List.length (Evd.conv_pbs sigma') <= npbs then sigma' else raise e)
+      | Evarsolve.UnifFailure (sigma', reason) ->
+        raise (Pretype_errors.PretypeError (env, sigma', Pretype_errors.CannotUnify (m, concl, Some reason)))
+      in
       Proofview.Unsafe.tclEVARSADVANCE sigma
     with e when CErrors.noncritical e ->
       let info = Exninfo.reify () in
