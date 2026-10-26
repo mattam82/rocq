@@ -729,7 +729,14 @@ let rec evar_conv_x flags env evd pbty term1 term2 =
      Note: incomplete heuristic... *)
   let ground_test =
     if is_ground_term evd term1 && is_ground_term evd term2 then
-      infer_conv_noticing_evars ~pb:pbty ~ts:flags.closed_ts env evd term1 term2
+      match infer_conv_noticing_evars ~pb:pbty ~ts:flags.closed_ts env evd term1 term2 with
+      | None when flags.presolve_evar_args ->
+        (* In tactic mode, as the meta-based unification did, ground terms
+           that are not convertible are not unified further, even if
+           existential variables were noticed through the unfolding of
+           local definitions. *)
+        Some (UnifFailure (evd, ConversionFailed (env,term1,term2)))
+      | r -> r
     else None
   in
   match ground_test with
