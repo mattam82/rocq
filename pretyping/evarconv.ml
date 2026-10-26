@@ -953,10 +953,30 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) flags env evd pbty
         ise_try evd [consume_stack l2r apprF apprR; eta]
     | Some lF ->
         let tR = Stack.zip evd apprR in
+        (* In tactic mode, first-order unification is tried eagerly, as the
+           meta-based unification did, instead of postponing the problem to
+           the heuristics (e.g. [?M ?A =?= gmap K T] gives [?A := T] rather
+           than an instance coming from a later type constraint). *)
+        let first_order i =
+          if not flags.presolve_evar_args then UnifFailure (i, NotSameHead)
+          else match Stack.list_of_app_stack skR with
+          | None -> UnifFailure (i, NotSameHead)
+          | Some lR ->
+            let nF = List.length lF and nR = List.length lR in
+            if nF > nR || Int.equal nF 0 then UnifFailure (i, NotSameHead)
+            else
+              let deb, rest = List.chop (nR - nF) lR in
+              (* The arguments are unified from the last one, as
+                 [first_order_unification] does. *)
+              ise_and i
+                [(fun i -> ise_list2 i (fun i -> switch (evar_conv_x flags env i CONV))
+                    (List.rev lF) (List.rev rest));
+                 (fun i -> switch (evar_conv_x flags env i CONV) (mkEvar ev) (applist (termR, deb)))]
+        in
           miller_pfenning l2r
             (fun () ->
               ise_try evd
-                [eta;(* Postpone the use of an heuristic *)
+                [eta; first_order; (* Postpone the use of an heuristic *)
                  (fun i ->
                    if not (occur_rigidly flags env i ev tR) then
                      let i,tF =
