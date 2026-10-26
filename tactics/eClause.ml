@@ -743,6 +743,39 @@ let get_dependent_typeclass_holes env sigma clenv =
     else None) clenv.cl_holes
   in Evar.Set.of_list evs
 
+(* For compatibility with the meta-based refiner ([Logic.mk_refgoals]), the
+   types of the holes becoming goals are recomputed from the type of the
+   applied term: when the clause was built from a type that is only convertible
+   to it (typically a cast whose typeclass holes got resolved afterwards), the
+   new goals get the types coming from the term, e.g. [pointwise_relation A R
+   f g] rather than [@equiv _ (pointwise_relation A R) f g]. *)
+let retype_holes env sigma clenv v =
+  let holes = List.fold_left (fun s h -> Evar.Set.add h.hole_evar_key s)
+      Evar.Set.empty clenv.cl_holes in
+  let hd, args = decompose_app sigma v in
+  if Array.is_empty args || Evar.Set.is_empty holes then sigma else
+  match Retyping.get_type_of env sigma hd with
+  | exception Retyping.RetypeError _ -> sigma
+  | ty ->
+    let rec aux sigma ty = function
+      | [] -> sigma
+      | arg :: args ->
+        let t = Reductionops.whd_all env sigma ty in
+        match EConstr.kind sigma t with
+        | Prod (_, c1, b) ->
+          let sigma = match EConstr.kind sigma arg with
+            | Evar (evk, _) when Evar.Set.mem evk holes && Evd.is_undefined sigma evk ->
+              let c1 = Reductionops.nf_betaiota env sigma c1 in
+              let evi = Evd.find_undefined sigma evk in
+              if EConstr.eq_constr sigma (Evd.evar_concl evi) c1 then sigma
+              else Evd.downcast evk c1 sigma
+            | _ -> sigma
+          in
+          aux sigma (Vars.subst1 arg b) args
+        | _ -> sigma
+    in
+    aux sigma ty (Array.to_list args)
+
 let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true) ?(with_ho=true)
                      ?(legacy_deps=false) ?origsigma ?strict flags (sigma, clenv) =
   let open Proofview in
@@ -779,6 +812,7 @@ let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=
     let sigma = List.fold_left declare_goal sigma (clenv_holes clenv) in
     let sigma = Evd.shelve sigma shelf in
     let v = Reductionops.nf_betaiota env sigma (clenv_val clenv) in
+    let sigma = retype_holes env sigma clenv v in
     sigma, v
   in
   let reduce_goal gl =
