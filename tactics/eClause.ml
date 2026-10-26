@@ -127,15 +127,47 @@ let strip_params env sigma c =
      | _ -> c)
   | _ -> c
 
+(** Template polymorphism: when creating a clause out of a template
+    polymorphic constructor, we refresh the type of the template arguments
+    with fresh universe levels. This prevents adding spurious global
+    constraints between the argument types and the global default template
+    level (same as in [Clenv]). *)
+let get_template env sigma c =
+  let (hd, args) = EConstr.decompose_app sigma c in
+  match EConstr.destRef sigma hd with
+  | GlobRef.ConstructRef (ind, i), u when Environ.template_polymorphic_ind ind env ->
+    let (mib, mip) = Inductive.lookup_mind_specif env ind in
+    let templ = match mib.Declarations.mind_template with
+    | None -> assert false
+    | Some t -> t.template_param_arguments
+    in
+    Some (ind, List.skipn_at_best (Array.length args) templ)
+  | _ -> None
+  | exception DestKO -> None
+
+let refresh_template_constraints env sigma ind c =
+  let mib = Environ.lookup_mind (fst ind) env in
+  let ctx = (Option.get mib.mind_template).template_context in
+  let cstrs0 = UVars.UContext.constraints @@ UVars.AbstractContext.repr ctx in
+  if PConstraints.is_empty cstrs0 then sigma
+  else
+    let _, allargs = decompose_app sigma c in
+    let allargs = Array.map (fun c -> Retyping.get_judgment_of env sigma c) allargs in
+    let sigma, univs = Typing.get_template_parameters env sigma ind allargs in
+    let cstrs, _, _ = Inductive.instantiate_template_universes mib univs in
+    Evd.add_univ_constraints sigma (PConstraints.univs cstrs)
+
 let make_evar_clause env sigma ?len ?occs c t =
   let bound = match len with
   | None -> -1
   | Some n -> assert (0 <= n); n
   in
-  let rec clrec (sigma, holes) inst n t =
+  let template = get_template env sigma c in
+  let template_args = match template with Some (_, args) -> args | None -> [] in
+  let rec clrec templ (sigma, holes) inst n t =
     if n = 0 then (sigma, holes, t)
     else match EConstr.kind sigma t with
-    | Cast (t, _, _) -> clrec (sigma, holes) inst n t
+    | Cast (t, _, _) -> clrec templ (sigma, holes) inst n t
     | Prod (na, t1, t2) ->
       (* Share the evar instances as we are living in the same context *)
       let inst, ctx, args, subst = match inst with
@@ -145,14 +177,27 @@ let make_evar_clause env sigma ?len ?occs c t =
         Some (ctx, args, subst), ctx, args, subst
       | Some (ctx, args, subst) -> inst, ctx, args, subst
       in
+      let sigma, t1, templ = match templ with
+      | [] -> sigma, t1, templ
+      | None :: templ -> sigma, t1, templ
+      | Some _ :: templ ->
+        let decls, _ = Reductionops.dest_arity env sigma t1 in
+        let sigma, s = Evd.new_univ_level_variable Evd.univ_flexible_alg sigma in
+        let t1 = EConstr.it_mkProd_or_LetIn (EConstr.mkType (Univ.Universe.make s)) decls in
+        sigma, t1, templ
+      in
       let sigma, hole, t2 = make_prod_evar ctx sigma ~args na (csubst_subst sigma subst t1) t2 in
-      clrec (sigma, hole :: holes) inst (pred n) t2
-    | LetIn (na, b, _, t) -> clrec (sigma, holes) inst n (subst1 b t)
+      clrec templ (sigma, hole :: holes) inst (pred n) t2
+    | LetIn (na, b, _, t) -> clrec templ (sigma, holes) inst n (subst1 b t)
     | _ -> (sigma, holes, t)
   in
-  let (sigma, holes, t) = clrec (sigma, []) None bound t in
+  let (sigma, holes, t) = clrec template_args (sigma, []) None bound t in
   let holes = List.rev holes in
   let v = applist (c, List.map (fun h -> h.hole_evar) holes) in
+  let sigma = match template with
+  | None -> sigma
+  | Some (ind, _) -> refresh_template_constraints env sigma ind v
+  in
   let c = strip_params env sigma v in
   let clause = { cl_holes = holes; cl_val = c;
                  cl_concl = t; cl_concl_occs = occs } in
