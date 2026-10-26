@@ -54,7 +54,7 @@ let e_assumption =
         let id = NamedDecl.get_id decl in
         let t = NamedDecl.get_type decl in
         if not_ground || occur_existential sigma t then
-          Clenv.unify ~cv_pb:CUMUL ~flags:eauto_unif_flags t <*> exact_no_check (mkVar id)
+          Clenv.unify ~cv_pb:CUMUL ~flags:eauto_unif_flags ~with_ho:false t <*> exact_no_check (mkVar id)
         else
           exact_check (mkVar id)
       in
