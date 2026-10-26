@@ -965,13 +965,16 @@ Applying theorems
 
       When :tacn:`apply` unifies the conclusion of :n:`@one_term` with the
       goal, some arguments of :n:`@one_term` appearing only in its
-      conclusion may remain uninstantiated (typically when the goal itself
-      contains existential variables). By default, :tacn:`apply` then fails
-      with an "Unable to find an instance" error, :tacn:`eapply` or an
-      explicit binding has to be used instead. When this :term:`flag` is on
-      (it is off by default), such arguments are turned into new goals, as
-      the implementation of :tacn:`apply` prior to the use of the evar-based
-      unification algorithm did.
+      conclusion may remain uninstantiated (typically when unification
+      succeeds by reduction without constraining them). By default,
+      :tacn:`apply` then fails with an "Unable to find an instance" error,
+      :tacn:`eapply` or an explicit binding has to be used instead. When
+      this :term:`flag` is on (it is off by default), such arguments are
+      turned into new goals, as the implementation of :tacn:`apply` prior
+      to the use of the evar-based unification algorithm did. In both
+      modes, arguments that get unified with existential variables already
+      present in the goal are accepted and left as (shelved) existential
+      variables.
 
    .. tacn:: rapply @one_term
 

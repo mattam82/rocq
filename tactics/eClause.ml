@@ -428,10 +428,18 @@ let clenv_map_concl f clenv =
   let concl = clenv.cl_concl in
   { clenv with cl_concl = f concl }
 
-let clenv_unify_type env sigma flags hole occs ty =
+let clenv_unify_type ?holes env sigma flags hole occs ty =
   (* Give priority to second-order matching which avoids falling back
      to it with unfolded terms through evar_conv. *)
   let ev, l = decompose_app sigma hole in
+  (* Is the head of the conclusion a hole of the clause (as opposed to an
+     existential variable coming e.g. from the implicit arguments of the
+     applied term, which the meta-based implementation treated
+     first-order)? *)
+  let is_hole ev = match holes with
+    | None -> true
+    | Some holes -> Evar.Set.mem (fst (destEvar sigma ev)) holes
+  in
   let hd, l' = decompose_app sigma ty in
   let is_explicit_pattern =
     if Array.length l == Array.length l' then
@@ -521,7 +529,7 @@ let clenv_unify_type env sigma flags hole occs ty =
           is handled by evar_conv_x (in tactic mode, restricting the evars of
           the solution so that it eta-reduces). *)
        let is_pattern = Array.for_all (fun c -> isVar sigma c || isRel sigma c) l in
-       if isEvar sigma ev && not (Array.is_empty l) && not is_pattern && not is_explicit_pattern then
+       if isEvar sigma ev && is_hole ev && not (Array.is_empty l) && not is_pattern && not is_explicit_pattern then
          match find_arg_instances sigma with
          | None -> None
          | Some (sigma, _) ->
@@ -556,7 +564,8 @@ let clenv_unify_type env sigma flags hole occs ty =
 
 let clenv_unify_concl env sigma flags ty clenv =
   let concl, occs = clenv.cl_concl, clenv.cl_concl_occs in
-  let sigma = clenv_unify_type env sigma flags concl occs ty in
+  let holes = Evar.Set.of_list (List.map (fun h -> h.hole_evar_key) clenv.cl_holes) in
+  let sigma = clenv_unify_type ~holes env sigma flags concl occs ty in
   sigma, clenv_advance sigma clenv
 
 (* [clenv_chain mv clenv clenv']
@@ -656,27 +665,46 @@ let dft = Unification.default_unify_flags
 let holes_goals sigma holes =
   List.map (fun h -> fst (destEvar sigma h.hole_evar)) holes
 
-let unresolved_dep_holes sigma ?origsigma clenv =
+let unresolved_dep_holes sigma ?origsigma ~strict clenv =
   let holes = clenv_dep_holes clenv in
   match origsigma with
   | None -> holes
   | Some origsigma ->
      let origevars = Evar.Map.domain (Evd.undefined_map origsigma) in
-     let filter h =
-       not (Evar.Set.mem (fst (destEvar sigma h.hole_evar)) (Evarutil.reachable_from_evars sigma origevars)) in
-     List.filter filter holes
+     let reachable = Evarutil.reachable_from_evars sigma origevars in
+     let filter h = not (Evar.Set.mem (fst (destEvar sigma h.hole_evar)) reachable) in
+     (match List.filter filter holes with
+      | [] -> []
+      | holes when strict -> holes
+      | holes ->
+        (* Unless [strict] is set, holes occurring in the instances of evars
+           that were undefined before the refinement are allowed as well: they
+           correspond to the metas that the meta-based unification turned into
+           evars when instantiating an existing evar with a term containing
+           metas ([apply] accepted them, [apply in] did not). *)
+        let occurring =
+          Evar.Set.fold (fun ev acc ->
+              match Evd.find_defined sigma ev with
+              | None -> acc
+              | Some evi ->
+                let Evd.Evar_defined b = Evd.evar_body evi in
+                Evar.Set.union acc (Evarutil.undefined_evars_of_term sigma b))
+            origevars Evar.Set.empty
+        in
+        let filter h = not (Evar.Set.mem (fst (destEvar sigma h.hole_evar)) occurring) in
+        List.filter filter holes)
 
-let check_dep_holes env sigma ?origsigma clenv =
-  match unresolved_dep_holes sigma ?origsigma clenv with
+let check_dep_holes env sigma ?origsigma ?(strict=false) clenv =
+  match unresolved_dep_holes sigma ?origsigma ~strict clenv with
   | [] -> ()
   | holes ->
     raise (Logic.RefinerError (env, sigma, Logic.UnresolvedBindings
                                  (List.map (fun h -> h.hole_name) holes)))
 
-let clenv_check_dep_holes with_evars env sigma ?origsigma clenv =
+let clenv_check_dep_holes with_evars env sigma ?origsigma ?strict clenv =
   let holes = clenv_dep_holes clenv in
   if not with_evars then
-    match check_dep_holes env sigma ?origsigma clenv with
+    match check_dep_holes env sigma ?origsigma ?strict clenv with
     | () -> Proofview.tclUNIT (holes_goals sigma holes)
     | exception (Logic.RefinerError _ as e) -> Proofview.tclZERO e
   else Proofview.tclUNIT (holes_goals sigma holes)
@@ -703,7 +731,7 @@ let get_dependent_typeclass_holes env sigma clenv =
   in Evar.Set.of_list evs
 
 let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true) ?(with_ho=true)
-                     ?(legacy_deps=false) ?origsigma flags (sigma, clenv) =
+                     ?(legacy_deps=false) ?origsigma ?strict flags (sigma, clenv) =
   let open Proofview in
   let open Proofview.Notations in
   Proofview.Goal.enter begin fun gl ->
@@ -757,7 +785,7 @@ let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=
   let check_clenv =
     if legacy_deps then clenv_recompute_deps env sigma ~hyps_only:true clenv else clenv in
   Proofview.Unsafe.tclEVARS sigma <*>
-    clenv_check_dep_holes with_evars env sigma ?origsigma check_clenv >>= (fun _ ->
+    clenv_check_dep_holes with_evars env sigma ?origsigma ?strict check_clenv >>= (fun _ ->
       let deps = holes_goals sigma (clenv_dep_holes clenv) in
       let () = debug_clenv (fun () -> Pp.str"Refining the goal") in
       let shelf = if shelve_subgoals then deps else [] in
@@ -812,11 +840,11 @@ let clenv_refine_bindings
 
 let clenv_refine_no_check
       ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true) ?with_ho
-      ?(flags=dft ()) ?origsigma clenv =
+      ?(flags=dft ()) ?origsigma ?strict clenv =
   let open Proofview.Notations in
   let flags = Unification.flags_of flags in
   Proofview.tclEVARMAP >>= fun sigma ->
-  clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?with_ho ?origsigma
+  clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?with_ho ?origsigma ?strict
                    flags (sigma, clenv)
 
 let clenv_refine2 ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true) ?with_ho

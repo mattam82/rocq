@@ -1828,7 +1828,7 @@ let eclause_refine_in ?(with_classes=true) with_evars flags targetid replace env
   let exact_tac =
     Proofview.tclEVARMAP >>= fun sigma ->
     EClause.clenv_refine_no_check ~with_evars ~with_classes ~with_ho:false ~flags
-      ~shelve_subgoals:true ~origsigma (EClause.clenv_advance sigma clenv) in
+      ~shelve_subgoals:true ~origsigma ~strict:true (EClause.clenv_advance sigma clenv) in
   let new_hyp_typ = EClause.clenv_concl clenv in
   let naming = NamingMustBe (CAst.make targetid) in
   Proofview.Unsafe.tclEVARS sigma <*>
@@ -1900,7 +1900,9 @@ let apply_in_once ?(respect_opaque = false) with_delta
       let clause = EClause.clenv_recompute_deps env sigma ~hyps_only:false clause in
       let sigma = Typeclasses.resolve_typeclasses ~fail:(not with_evars) env sigma in
       let clause = EClause.clenv_advance sigma clause in
-      let () = if not with_evars then EClause.check_dep_holes env sigma ~origsigma clause in
+      (* As with the meta-based implementation, holes that got unified with
+         existing existential variables must be resolved for [apply in]. *)
+      let () = if not with_evars then EClause.check_dep_holes env sigma ~origsigma ~strict:true clause in
       let cleartac = apply_clear_request clear_flag false idc <*> clear idstoclear in
       let refine =
         Tacticals.tclTHENFIRST

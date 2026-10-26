@@ -218,10 +218,10 @@ val clenv_refine2 :
 
 val clenv_refine_no_check :
   ?with_evars:bool -> ?with_classes:bool -> ?shelve_subgoals:bool -> ?with_ho:bool ->
-  ?flags:Unification.unify_flags -> ?origsigma:Evd.evar_map ->
+  ?flags:Unification.unify_flags -> ?origsigma:Evd.evar_map -> ?strict:bool ->
   clause -> unit Proofview.tactic
 (** Refine the goal without going through the first step of unification with
-    the goal's conclusion. *)
+    the goal's conclusion. See [check_dep_holes] for [strict]. *)
 
 val apply_delayed_bindings : env -> (hole * EConstr.t) list -> Evd.evar_map -> Evd.evar_map
 
@@ -238,12 +238,17 @@ val clenv_solve_clause_constraints :
     and advance the clause according to their solution. Fails if there remains
     unsolvable unification constraints. *)
 
-val check_dep_holes : Environ.env -> Evd.evar_map -> ?origsigma:Evd.evar_map -> clause -> unit
+val check_dep_holes : Environ.env -> Evd.evar_map -> ?origsigma:Evd.evar_map -> ?strict:bool ->
+  clause -> unit
 (** Raise [Logic.RefinerError] if dependent holes remain, see [clenv_check_dep_holes]. *)
 
 val clenv_check_dep_holes : bool -> Environ.env -> Evd.evar_map -> ?origsigma:Evd.evar_map ->
-                            clause -> Evar.t list Proofview.tactic
+                            ?strict:bool -> clause -> Evar.t list Proofview.tactic
 (** Check that dependent holes do not remain if the bool is false,
     returning the dependent holes as a result. This takes optionally into account
     an original evar_map to check for fresh existentials resulting from pruning
-    original ones, which are allowed dependent holes even if bool is false. *)
+    original ones, which are allowed dependent holes even if bool is false.
+    Unless [strict] is set (default [false]), holes occurring in the instances
+    of existential variables that were undefined in the original evar_map are
+    allowed as well, as the meta-based implementation of [apply] turned such
+    metas into existential variables; [apply in] rejects them. *)
