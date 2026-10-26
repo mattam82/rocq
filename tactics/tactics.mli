@@ -413,17 +413,15 @@ val apply_with_bindings_gen :
 val apply_with_delayed_bindings_gen :
   advanced_flag -> evars_flag -> (clear_flag * constr with_bindings Proofview.tactic CAst.t) list -> unit Proofview.tactic
 
-(** Variant of [apply_with_bindings_gen] which works on a hypothesis instead of the goal.
-    - [with_ho]: if [true] (default [false]), use higher-order unification to solve
-      the unification constraints arising from the application. *)
+(** Variant of [apply_with_bindings_gen] which works on a hypothesis instead of the goal. *)
 val apply_in :
-  ?with_ho:bool -> advanced_flag -> evars_flag -> Id.t ->
+  advanced_flag -> evars_flag -> Id.t ->
     (clear_flag * constr with_bindings CAst.t) list ->
     intro_pattern option -> unit Proofview.tactic
 
 (** Variant of [apply_in] in which the terms are produced by tactics.*)
 val apply_delayed_in :
-  ?with_ho:bool -> advanced_flag -> evars_flag -> Id.t ->
+  advanced_flag -> evars_flag -> Id.t ->
     (clear_flag * constr with_bindings Proofview.tactic CAst.t) list ->
     intro_pattern option -> unit Proofview.tactic -> unit Proofview.tactic
 

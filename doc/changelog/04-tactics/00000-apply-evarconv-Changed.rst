@@ -12,9 +12,5 @@
   Flag :flag:`Legacy Apply Dependency` to restore the behavior of
   :tacn:`apply` turning the arguments of the applied lemma that only appear
   in its conclusion and remain uninstantiated into new goals, instead of
-  failing (`eapply` or an explicit binding can be used instead).
-- **Added:**
-  Tactics :tacn:`apply_ho` and :tacn:`eapply_ho`, variants of
-  :tacn:`apply` and :tacn:`eapply` using higher-order unification when
-  applying a lemma in a hypothesis (`apply_ho H in h`)
+  failing (`eapply` or an explicit binding can be used instead)
   (by Matthieu Sozeau, Maxime Dénès and Hugo Herbelin).

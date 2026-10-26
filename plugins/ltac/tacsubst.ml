@@ -127,8 +127,8 @@ let rec subst_match_goal_hyps subst = function
 let rec subst_atomic subst (t:glob_atomic_tactic_expr) = match t with
   (* Basic tactics *)
   | TacIntroPattern (ev,l) -> TacIntroPattern (ev,List.map (subst_intro_pattern subst) l)
-  | TacApply (a,ev,ho,cb,cl) ->
-      TacApply (a,ev,ho,List.map (subst_glob_with_bindings_arg subst) cb,
+  | TacApply (a,ev,cb,cl) ->
+      TacApply (a,ev,List.map (subst_glob_with_bindings_arg subst) cb,
                 List.map (on_snd (Option.map (subst_intro_pattern subst))) cl)
   | TacElim (ev,cb,cbo) ->
       TacElim (ev,subst_glob_with_bindings_arg subst cb,

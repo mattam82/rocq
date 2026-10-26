@@ -1907,8 +1907,6 @@ simple_tactic: [
 | "eintros"
 | "apply" LIST1 constr_with_bindings_arg SEP "," in_hyp_as
 | "eapply" LIST1 constr_with_bindings_arg SEP "," in_hyp_as
-| "apply_ho" LIST1 constr_with_bindings_arg SEP "," in_hyp_as
-| "eapply_ho" LIST1 constr_with_bindings_arg SEP "," in_hyp_as
 | "simple" "apply" LIST1 constr_with_bindings_arg SEP "," in_hyp_as
 | "simple" "eapply" LIST1 constr_with_bindings_arg SEP "," in_hyp_as
 | "elim" constr_with_bindings_arg OPT eliminator

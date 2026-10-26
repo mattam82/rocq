@@ -1822,12 +1822,12 @@ let progress_with_clause env sigma flags innerclause clause =
    ones being the [Ti] and the first one being [G] whose hypothesis
    [id] is replaced by P *)
 
-let eclause_refine_in ?(with_classes=true) ~with_ho with_evars flags targetid replace env sigma origsigma clenv =
+let eclause_refine_in ?(with_classes=true) with_evars flags targetid replace env sigma origsigma clenv =
   (* For compatibility: reduce the conclusion *)
   let clenv = EClause.clenv_map_concl (Reductionops.nf_betaiota env sigma) clenv in
   let exact_tac =
     Proofview.tclEVARMAP >>= fun sigma ->
-    EClause.clenv_refine_no_check ~with_evars ~with_classes ~with_ho ~flags
+    EClause.clenv_refine_no_check ~with_evars ~with_classes ~with_ho:false ~flags
       ~shelve_subgoals:true ~origsigma (EClause.clenv_advance sigma clenv) in
   let new_hyp_typ = EClause.clenv_concl clenv in
   let naming = NamingMustBe (CAst.make targetid) in
@@ -1854,15 +1854,11 @@ let apply_in_once_main flags env sigma innerclause (loc,d,lbind) =
   aux (sigma, clenv)
 
 (* Solving the unification constraints arising from an application in a
-   hypothesis. Unless [with_ho] is set, higher-order unification is only
-   used when the rigid sides of the problems contain no existential
-   variables, as the meta-based implementation did (it refused to abstract
-   over terms containing metas). *)
-let solve_apply_in_constraints env flags ~with_ho sigma =
+   hypothesis. Higher-order unification is only used when the rigid sides of
+   the problems contain no existential variables, as the meta-based
+   implementation did (it refused to abstract over terms containing metas). *)
+let solve_apply_in_constraints env flags sigma =
   let flags = Unification.flags_of flags in
-  if with_ho then
-    Evarconv.solve_unif_constraints_with_heuristics env ~flags ~with_ho:true sigma
-  else
     try Evarconv.solve_unif_constraints_with_heuristics env ~flags ~with_ho:false sigma
     with e when CErrors.noncritical e ->
       let is_flex t = isEvar sigma (fst (decompose_app sigma t)) in
@@ -1873,7 +1869,7 @@ let solve_apply_in_constraints env flags ~with_ho sigma =
         Evarconv.solve_unif_constraints_with_heuristics env ~flags ~with_ho:true sigma
       else raise e
 
-let apply_in_once ?(respect_opaque = false) ?(with_ho = false) with_delta
+let apply_in_once ?(respect_opaque = false) with_delta
     with_destruct with_evars naming id (clear_flag,{ CAst.loc; v= d,lbind}) tac =
   let open Context.Rel.Declaration in
   Proofview.Goal.enter begin fun gl ->
@@ -1899,7 +1895,7 @@ let apply_in_once ?(respect_opaque = false) ?(with_ho = false) with_delta
       (* The remaining checks are performed eagerly so that failures can be
          caught below and [descend_in_conjunctions] tried, as with the
          meta-based implementation. *)
-      let sigma = solve_apply_in_constraints env flags ~with_ho sigma in
+      let sigma = solve_apply_in_constraints env flags sigma in
       let clause = EClause.clenv_advance sigma clause in
       let clause = EClause.clenv_recompute_deps env sigma ~hyps_only:false clause in
       let sigma = Typeclasses.resolve_typeclasses ~fail:(not with_evars) env sigma in
@@ -1908,7 +1904,7 @@ let apply_in_once ?(respect_opaque = false) ?(with_ho = false) with_delta
       let cleartac = apply_clear_request clear_flag false idc <*> clear idstoclear in
       let refine =
         Tacticals.tclTHENFIRST
-          (eclause_refine_in ~with_ho with_evars flags targetid replace env sigma origsigma clause)
+          (eclause_refine_in with_evars flags targetid replace env sigma origsigma clause)
           cleartac
       in
       Tacticals.tclTHENFIRST (replace_error_option err refine) (tac targetid)
@@ -1922,11 +1918,11 @@ let apply_in_once ?(respect_opaque = false) ?(with_ho = false) with_delta
   Proofview.Unsafe.tclEVARS sigma <*> aux [] with_destruct d
   end
 
-let apply_in_delayed_once ?(respect_opaque = false) ?with_ho with_delta
+let apply_in_delayed_once ?(respect_opaque = false) with_delta
     with_destruct with_evars naming id (clear_flag,{CAst.loc;v=f}) tac =
   Proofview.Goal.enter begin fun _ ->
     Tacticals.tclRUNWITHHOLES with_evars f
-      (fun c -> apply_in_once ~respect_opaque ?with_ho with_delta with_destruct with_evars
+      (fun c -> apply_in_once ~respect_opaque with_delta with_destruct with_evars
           naming id (clear_flag,CAst.(make ?loc c)) tac)
   end
 
@@ -2564,10 +2560,10 @@ let head_ident sigma c =
 
 (* apply in as *)
 
-let general_apply_in ?(respect_opaque=false) ?with_ho with_delta
+let general_apply_in ?(respect_opaque=false) with_delta
     with_destruct with_evars id lemmas ipat then_tac =
   let tac (naming,lemma) tac id =
-    apply_in_delayed_once ~respect_opaque ?with_ho with_delta
+    apply_in_delayed_once ~respect_opaque with_delta
       with_destruct with_evars naming id lemma tac in
   Proofview.Goal.enter begin fun gl ->
   let destopt =
@@ -2595,12 +2591,12 @@ let general_apply_in ?(respect_opaque=false) ?with_ho with_delta
     Tacticals.tclTHENFIRST (tclMAPFIRST tac lemmas_target) (ipat_tac id)
 *)
 
-let apply_in ?with_ho simple with_evars id lemmas ipat =
+let apply_in simple with_evars id lemmas ipat =
   let lemmas = List.map (fun (k,{CAst.loc;v=l}) -> k, CAst.make ?loc (Proofview.tclUNIT l)) lemmas in
-  general_apply_in ?with_ho simple simple with_evars id lemmas ipat Tacticals.tclIDTAC
+  general_apply_in simple simple with_evars id lemmas ipat Tacticals.tclIDTAC
 
-let apply_delayed_in ?with_ho simple with_evars id lemmas ipat then_tac =
-  general_apply_in ~respect_opaque:true ?with_ho simple simple with_evars id lemmas ipat then_tac
+let apply_delayed_in simple with_evars id lemmas ipat then_tac =
+  general_apply_in ~respect_opaque:true simple simple with_evars id lemmas ipat then_tac
 
 (*****************************)
 (* Tactics abstracting terms *)

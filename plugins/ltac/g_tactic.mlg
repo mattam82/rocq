@@ -459,19 +459,15 @@ GRAMMAR EXTEND Gram
           { CAst.make ~loc @@ TacAtom (TacIntroPattern (true,[CAst.make ~loc @@IntroForthcoming false])) }
 
       | IDENT "apply"; cl = LIST1 constr_with_bindings_arg SEP ",";
-          inhyp = in_hyp_as -> { CAst.make ~loc @@ TacAtom (TacApply (true,false,false,cl,inhyp)) }
+          inhyp = in_hyp_as -> { CAst.make ~loc @@ TacAtom (TacApply (true,false,cl,inhyp)) }
       | IDENT "eapply"; cl = LIST1 constr_with_bindings_arg SEP ",";
-          inhyp = in_hyp_as -> { CAst.make ~loc @@ TacAtom (TacApply (true,true,false,cl,inhyp)) }
-      | IDENT "apply_ho"; cl = LIST1 constr_with_bindings_arg SEP ",";
-          inhyp = in_hyp_as -> { CAst.make ~loc @@ TacAtom (TacApply (true,false,true,cl,inhyp)) }
-      | IDENT "eapply_ho"; cl = LIST1 constr_with_bindings_arg SEP ",";
-          inhyp = in_hyp_as -> { CAst.make ~loc @@ TacAtom (TacApply (true,true,true,cl,inhyp)) }
+          inhyp = in_hyp_as -> { CAst.make ~loc @@ TacAtom (TacApply (true,true,cl,inhyp)) }
       | IDENT "simple"; IDENT "apply";
           cl = LIST1 constr_with_bindings_arg SEP ",";
-          inhyp = in_hyp_as -> { CAst.make ~loc @@ TacAtom (TacApply (false,false,false,cl,inhyp)) }
+          inhyp = in_hyp_as -> { CAst.make ~loc @@ TacAtom (TacApply (false,false,cl,inhyp)) }
       | IDENT "simple"; IDENT "eapply";
           cl = LIST1 constr_with_bindings_arg SEP",";
-          inhyp = in_hyp_as -> { CAst.make ~loc @@ TacAtom (TacApply (false,true,false,cl,inhyp)) }
+          inhyp = in_hyp_as -> { CAst.make ~loc @@ TacAtom (TacApply (false,true,cl,inhyp)) }
       | IDENT "elim"; cl = constr_with_bindings_arg; el = OPT eliminator ->
           { CAst.make ~loc @@ TacAtom (TacElim (false,cl,el)) }
       | IDENT "eelim"; cl = constr_with_bindings_arg; el = OPT eliminator ->

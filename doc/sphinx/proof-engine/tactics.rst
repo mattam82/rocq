@@ -973,15 +973,6 @@ Applying theorems
       the implementation of :tacn:`apply` prior to the use of the evar-based
       unification algorithm did.
 
-   .. tacn:: apply_ho {+, @one_term_with_bindings } {? @in_hyp_as }
-             eapply_ho {+, @one_term_with_bindings } {? @in_hyp_as }
-
-      Behaves like :tacn:`apply` and :tacn:`eapply` but, when applied in a
-      hypothesis (:n:`@in_hyp_as`), always allows higher-order unification
-      to find instances for the variables of :n:`@one_term`. By default,
-      :n:`apply @one_term in @ident` only uses higher-order unification when
-      the type of the hypothesis contains no existential variables.
-
    .. tacn:: rapply @one_term
 
       Behaves like :tacn:`eapply` but

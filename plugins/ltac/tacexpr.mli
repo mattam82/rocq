@@ -32,7 +32,6 @@ type global_flag = (* [gfail] or [fail] *)
 type evars_flag = bool     (* true = pose evars       false = fail on evars *)
 type rec_flag = bool       (* true = recursive        false = not recursive *)
 type advanced_flag = bool  (* true = advanced         false = basic *)
-type ho_flag       = bool  (* true = allow higher-order unification (apply in) *)
 type letin_flag = bool     (* true = use local def    false = use Leibniz *)
 type clear_flag = bool option (* true = clear hyp, false = keep hyp, None = use default *)
 type check_flag = bool     (* true = check    false = do not check *)
@@ -105,7 +104,7 @@ type intro_pattern_naming = Namegen.intro_pattern_naming_expr CAst.t
 type 'a gen_atomic_tactic_expr =
   (* Basic tactics *)
   | TacIntroPattern of evars_flag * 'dtrm intro_pattern_expr CAst.t list
-  | TacApply of advanced_flag * evars_flag * ho_flag * 'trm with_bindings_arg list *
+  | TacApply of advanced_flag * evars_flag * 'trm with_bindings_arg list *
       ('nam * 'dtrm intro_pattern_expr CAst.t option) list
   | TacElim of evars_flag * 'trm with_bindings_arg * 'trm with_bindings option
   | TacCase of evars_flag * 'trm with_bindings_arg
