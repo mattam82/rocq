@@ -465,11 +465,18 @@ let clenv_unify_type env sigma flags hole occs ty =
      in
      (* Try normal unification first, if that fails use heuristics + higher-order unif *)
      let open Evarsolve in
+     let npbs = List.length (Evd.conv_pbs sigma) in
      match Evarconv.evar_conv_x flags env sigma Conversion.CUMUL hole ty with
-     | Success sigma ->
+     | Success sigma' ->
+        (* Only try to solve the unification problems introduced by this
+           unification: the goal may already carry postponed problems that
+           cannot be solved yet, which the meta-based implementation never
+           looked at. *)
+        if List.length (Evd.conv_pbs sigma') <= npbs then sigma'
+        else
         (try Evarconv.solve_unif_constraints_with_heuristics
-               ~flags ~with_ho:false env sigma
-         with e -> ho ())
+               ~flags ~with_ho:false env sigma'
+         with e when CErrors.noncritical e -> ho ())
      | UnifFailure _ -> ho ()
 
 
