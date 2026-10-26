@@ -465,8 +465,30 @@ let clenv_unify_type env sigma flags hole occs ty =
         Evarconv.solve_unif_constraints_with_heuristics
           ~flags ~with_ho:true env sigma
      in
-     (* Try normal unification first, if that fails use heuristics + higher-order unif *)
      let open Evarsolve in
+     (* When the conclusion is an evar applied to arguments (as for
+        elimination-like lemmas), favor second-order matching over the
+        first-order decomposition of the application, as [w_unify] did. *)
+     let so_first () =
+       (* [w_unify] refused to abstract over bare metas (allow_K is false for
+          apply), falling back to first-order unification: only favor
+          second-order matching when some argument is not a bare evar. *)
+       let has_rigid_arg = Array.exists (fun c -> not (isEvar sigma (whd_evar sigma c))) l in
+       if isEvar sigma ev && has_rigid_arg && not is_explicit_pattern then
+         match Evarconv.second_order_matching_with_args flags env sigma true
+                 Conversion.CUMUL (destEvar sigma ev) l ty with
+         | Success sigma' ->
+           (try Some (Evarconv.solve_unif_constraints_with_heuristics
+                        ~flags ~with_ho:true env sigma')
+            with e when CErrors.noncritical e -> None)
+         | UnifFailure _ -> None
+         | exception e when CErrors.noncritical e -> None
+       else None
+     in
+     match so_first () with
+     | Some sigma -> sigma
+     | None ->
+     (* Try normal unification first, if that fails use heuristics + higher-order unif *)
      let npbs = List.length (Evd.conv_pbs sigma) in
      match Evarconv.evar_conv_x flags env sigma Conversion.CUMUL hole ty with
      | Success sigma' ->

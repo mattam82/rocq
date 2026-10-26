@@ -1647,7 +1647,7 @@ let apply_on_subterm env evd fixed f test c t =
         try test env !evdref c t
         with e when CErrors.noncritical e -> false, evd in
      if b then (debug_ho_unification (fun () -> Pp.str "succeeded");
-                let evd', fixed, t' = f !evdref !fixedref k t in
+                let evd', fixed, t' = f !evdref evd !fixedref k t in
                 fixedref := fixed;
                 evdref := evd'; t')
      else (
@@ -1798,8 +1798,12 @@ let second_order_matching ~presolve flags env_rhs evd (evk,args) (test,argoccs) 
                                 prc env_rhs evd c ++ str" in " ++
                                 prc env_rhs evd rhs));
      let occ = ref 1 in
-     let set_var evd fixed k inst =
+     let set_var evd evdext fixed k inst =
        let oc = !occ in
+       (* In tactic mode, keep the instantiations of the evars of [c] found
+          by the occurrence test, so that the following occurrences must
+          agree with the first one, as [w_unify] did. *)
+       let evd = if presolve then evdext else evd in
        debug_ho_unification (fun () ->
        Pp.(str"Found one occurrence" ++ fnl () ++
            str"cty: " ++ prc env_rhs evd c));
@@ -1870,7 +1874,7 @@ let second_order_matching ~presolve flags env_rhs evd (evk,args) (test,argoccs) 
             let (b, evd') = test env evd c t in
             let () = if b then evdr := evd' in
             (b, evd') in
-          let keep _ fixed _ t = (!evdr, fixed, t) in
+          let keep _ _ fixed _ t = (!evdr, fixed, t) in
           let evd', _, _ = apply_on_subterm env_rhs evd Evar.Set.empty keep test c rhs in
           evd') evd subst
     else evd

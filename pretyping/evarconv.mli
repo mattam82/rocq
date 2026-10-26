@@ -137,6 +137,12 @@ val default_occurrence_test : allowed_evars:Evarsolve.AllowedEvars.t -> Transpar
 val default_occurrences_selection : ?allowed_evars:Evarsolve.AllowedEvars.t (* By default, all *) ->
   TransparentState.t -> int -> occurrences_selection
 
+(** [second_order_matching_with_args flags env sigma with_ho pbty ev args t]
+    solves [?ev args = t] by second-order matching ([with_ho] must be [true]
+    for it to do anything), using the default occurrence selection. *)
+val second_order_matching_with_args : unify_flags -> env -> evar_map -> bool ->
+  conv_pb -> EConstr.existential -> constr array -> constr -> Evarsolve.unification_result
+
 val second_order_matching : ?presolve:bool -> unify_flags -> env -> evar_map ->
   EConstr.existential -> occurrences_selection -> constr -> evar_map * bool
 (** [presolve] (default [false]): first instantiate the arguments of the evar
