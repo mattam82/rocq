@@ -469,12 +469,48 @@ let clenv_unify_type env sigma flags hole occs ty =
      (* When the conclusion is an evar applied to arguments (as for
         elimination-like lemmas), favor second-order matching over the
         first-order decomposition of the application, as [w_unify] did. *)
+     (* Emulate [w_unify_to_subterm_list] with allow_K disabled (the flags of
+        apply): each argument must unify with some closed subterm of the goal,
+        bare evars cannot be abstracted over, and two arguments must not be
+        matched to the same subterm (non-linear unification). Arguments are
+        processed from the last one, so that the evars of the first arguments
+        get instantiated by the last ones. *)
+     let find_arg_instances sigma =
+       let exception Found of Evd.evar_map * constr in
+       let test = Evarconv.default_occurrence_test ~allowed_evars:flags.allowed_evars flags.subterm_ts in
+       let find sigma c =
+         let rec aux t =
+           let () =
+             if Vars.closed0 sigma t && not (isEvar sigma t) then
+               match test env sigma c t with
+               | (true, sigma') -> raise (Found (sigma', t))
+               | (false, _) -> ()
+               | exception e when CErrors.noncritical e -> ()
+           in
+           EConstr.iter sigma aux t
+         in
+         match aux ty with
+         | () -> None
+         | exception Found (sigma', t) -> Some (sigma', t)
+       in
+       let fold c acc = match acc with
+         | None -> None
+         | Some (sigma, found) ->
+           let c = whd_evar sigma c in
+           if isEvar sigma c then None
+           else match find sigma c with
+             | None -> None
+             | Some (sigma', t) ->
+               if List.exists (fun t' -> EConstr.eq_constr sigma' t t') found then None
+               else Some (sigma', t :: found)
+       in
+       Array.fold_right fold l (Some (sigma, []))
+     in
      let so_first () =
-       (* [w_unify] refused to abstract over bare metas (allow_K is false for
-          apply), falling back to first-order unification: only favor
-          second-order matching when some argument is not a bare evar. *)
-       let has_rigid_arg = Array.exists (fun c -> not (isEvar sigma (whd_evar sigma c))) l in
-       if isEvar sigma ev && has_rigid_arg && not is_explicit_pattern then
+       if isEvar sigma ev && not (Array.is_empty l) && not is_explicit_pattern then
+         match find_arg_instances sigma with
+         | None -> None
+         | Some (sigma, _) ->
          match Evarconv.second_order_matching_with_args flags env sigma true
                  Conversion.CUMUL (destEvar sigma ev) l ty with
          | Success sigma' ->
