@@ -24,7 +24,7 @@ Arguments eq_refl {B}%_type_scope {y}, [_] _
   (where some original arguments have been renamed)
 Expands to: Constructor Corelib.Init.Logic.eq_refl
 Declared in library Corelib.Init.Logic, line 380, characters 4-11
-File "./output/Arguments_renaming.v", line 15, characters 0-29:
+File "./output/Arguments_renaming.v", line 16, characters 0-37:
 Warning:
 Ignoring 'with' argument for binder y, already solved by unification.
 [unused-with-argument,tactics,default]
