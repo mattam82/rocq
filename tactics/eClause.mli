@@ -201,7 +201,7 @@ val with_clause : constr * types -> (clause -> unit Proofview.tactic) -> unit Pr
 (** [with_clause (c, t) k] Turn (c, t) into a clause and apply the tactic to it.  *)
 
 val clenv_refine2 :
-  ?with_evars:bool -> ?with_classes:bool -> ?shelve_subgoals:bool ->
+  ?with_evars:bool -> ?with_classes:bool -> ?shelve_subgoals:bool -> ?with_ho:bool ->
   ?flags:Unification.unify_flags -> ?origsigma:Evd.evar_map ->
   clause -> unit Proofview.tactic
 (** Refine the goal with the given clause:
@@ -212,10 +212,12 @@ val clenv_refine2 :
     would be introduced by the refinement. Fresh existential variables
     resulting from the pruning of an original one from origsigma
     (due to clearing an hypothesis) are still allowed.
-    - If shelve_subgoals is true (the default), dependent subgoals are shelved. *)
+    - If shelve_subgoals is true (the default), dependent subgoals are shelved.
+    - If with_ho is true (the default), higher-order unification is used to
+    solve the remaining unification constraints. *)
 
 val clenv_refine_no_check :
-  ?with_evars:bool -> ?with_classes:bool -> ?shelve_subgoals:bool ->
+  ?with_evars:bool -> ?with_classes:bool -> ?shelve_subgoals:bool -> ?with_ho:bool ->
   ?flags:Unification.unify_flags -> ?origsigma:Evd.evar_map ->
   clause -> unit Proofview.tactic
 (** Refine the goal without going through the first step of unification with
@@ -224,7 +226,7 @@ val clenv_refine_no_check :
 val apply_delayed_bindings : env -> (hole * EConstr.t) list -> Evd.evar_map -> Evd.evar_map
 
 val clenv_refine_bindings :
-  ?with_evars:bool -> ?with_classes:bool -> ?shelve_subgoals:bool ->
+  ?with_evars:bool -> ?with_classes:bool -> ?shelve_subgoals:bool -> ?with_ho:bool ->
   ?flags:Unification.unify_flags ->
   hyps_only:bool -> EConstr.constr Tactypes.bindings ->
   ?origsigma:Evd.evar_map -> clause -> unit Proofview.tactic

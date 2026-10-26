@@ -454,8 +454,8 @@ let rec intern_atomic lf ist x =
   (* Basic tactics *)
   | TacIntroPattern (ev,l) ->
       TacIntroPattern (ev,List.map (intern_intro_pattern lf ist) l)
-  | TacApply (a,ev,cb,inhyp) ->
-      TacApply (a,ev,List.map (intern_constr_with_bindings_arg ist) cb,
+  | TacApply (a,ev,ho,cb,inhyp) ->
+      TacApply (a,ev,ho,List.map (intern_constr_with_bindings_arg ist) cb,
                 List.map (intern_in_hyp_as ist lf) inhyp)
   | TacElim (ev,cb,cbo) ->
       TacElim (ev,intern_constr_with_bindings_arg ist cb,

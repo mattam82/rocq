@@ -801,6 +801,8 @@ Entry simple_tactic is
   | IDENT "apply"; "->"; constr
   | IDENT "apply"; LIST1 constr_with_bindings_arg SEP ","; in_hyp_as
   | IDENT "eapply"; LIST1 constr_with_bindings_arg SEP ","; in_hyp_as
+  | IDENT "apply_ho"; LIST1 constr_with_bindings_arg SEP ","; in_hyp_as
+  | IDENT "eapply_ho"; LIST1 constr_with_bindings_arg SEP ","; in_hyp_as
   | IDENT "elim"; constr_with_bindings_arg; OPT eliminator
   | IDENT "eelim"; constr_with_bindings_arg; OPT eliminator
   | IDENT "case"; induction_clause_list

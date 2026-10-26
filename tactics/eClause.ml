@@ -628,7 +628,7 @@ let get_dependent_typeclass_holes env sigma clenv =
     else None) clenv.cl_holes
   in Evar.Set.of_list evs
 
-let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true) ?origsigma
+let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true) ?(with_ho=true) ?origsigma
                      flags (sigma, clenv) =
   let open Proofview in
   let open Proofview.Notations in
@@ -636,7 +636,7 @@ let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=
   let env = Proofview.Goal.env gl in
   let sigma, clenv =
     try
-      let sigma = Evarconv.solve_unif_constraints_with_heuristics ~flags ~with_ho:true env sigma in
+      let sigma = Evarconv.solve_unif_constraints_with_heuristics ~flags ~with_ho env sigma in
       sigma, clenv_advance sigma clenv
     with e when CErrors.noncritical e -> sigma, clenv in
   let sigma, clenv =
@@ -703,7 +703,7 @@ let clenv_unify_concl_tac flags clenv k =
   end
 
 let clenv_refine_bindings
-    ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true)
+    ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true) ?with_ho
     ?(flags=dft ()) ~hyps_only b ?origsigma clenv =
   let open Proofview in
   let open Proofview.Notations in
@@ -724,25 +724,25 @@ let clenv_refine_bindings
           debug_clenv (fun () -> Pp.str"Recomputed dependencies");
           let sigma = apply_delayed_bindings env delayed sigma in
           debug_clenv (fun () -> Pp.str"Applied delayed bindings");
-          clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?origsigma
+          clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?with_ho ?origsigma
                          flags (sigma, clenv)
         with e when Pretype_errors.precatchable_exception e -> Proofview.tclZERO e))
   end
 
 let clenv_refine_no_check
-      ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true)
+      ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true) ?with_ho
       ?(flags=dft ()) ?origsigma clenv =
   let open Proofview.Notations in
   let flags = Unification.flags_of flags in
   Proofview.tclEVARMAP >>= fun sigma ->
-  clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?origsigma
+  clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?with_ho ?origsigma
                    flags (sigma, clenv)
 
-let clenv_refine2 ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true)
+let clenv_refine2 ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true) ?with_ho
                   ?(flags=dft ()) ?origsigma clenv =
   let flags = Unification.flags_of flags in
   clenv_unify_concl_tac flags clenv
-   (clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?origsigma flags)
+   (clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?with_ho ?origsigma flags)
 
 let with_clause (c, t) kont =
   let open Proofview in

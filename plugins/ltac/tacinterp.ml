@@ -1722,7 +1722,7 @@ and interp_atomic ist tac : unit Proofview.tactic =
              expected behaviour. *)
           (Tactics.intro_patterns ev l')
       end
-  | TacApply (a,ev,cb,cl) ->
+  | TacApply (a,ev,ho,cb,cl) ->
       (* spiwack: until the tactic is in the monad *)
       Proofview.Trace.name_tactic (fun () -> Pp.str"<apply>") begin
       Proofview.Goal.enter begin fun gl ->
@@ -1737,7 +1737,7 @@ and interp_atomic ist tac : unit Proofview.tactic =
           | [] -> Tactics.apply_with_delayed_bindings_gen a ev l
           | cl ->
               let cl = List.map (interp_in_hyp_as ist env sigma) cl in
-              List.fold_right (fun (id,ipat) -> Tactics.apply_delayed_in a ev id l ipat) cl Tacticals.tclIDTAC in
+              List.fold_right (fun (id,ipat) -> Tactics.apply_delayed_in ~with_ho:ho a ev id l ipat) cl Tacticals.tclIDTAC in
         tac
       end
       end
