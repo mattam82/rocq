@@ -799,7 +799,9 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) flags env evd pbty
         debug_unification (fun () ->
           Pp.(str "Miller pattern detected"));
         let t2 = tM in
-        let t2 = solve_pattern_eqn env evd l1' t2 in
+        let evd, t2 =
+          if flags.presolve_evar_args then solve_pattern_eqn_pruning env evd l1' t2
+          else evd, solve_pattern_eqn env evd l1' t2 in
         match solve_simple_eqn (conv_fun evar_conv_x) flags env evd
             (position_problem l2r pbty,ev,t2) with
         | Success _ as r ->

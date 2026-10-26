@@ -517,7 +517,11 @@ let clenv_unify_type env sigma flags hole occs ty =
        Array.fold_right fold l (Some (sigma, []))
      in
      let so_first () =
-       if isEvar sigma ev && not (Array.is_empty l) && not is_explicit_pattern then
+       (* When all the arguments are variables, this is a Miller pattern which
+          is handled by evar_conv_x (in tactic mode, restricting the evars of
+          the solution so that it eta-reduces). *)
+       let is_pattern = Array.for_all (fun c -> isVar sigma c || isRel sigma c) l in
+       if isEvar sigma ev && not (Array.is_empty l) && not is_pattern && not is_explicit_pattern then
          match find_arg_instances sigma with
          | None -> None
          | Some (sigma, _) ->

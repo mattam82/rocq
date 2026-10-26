@@ -1196,6 +1196,74 @@ let closure_of_filter ~can_drop evd evk = function
   if Filter.equal newfilter (evar_filter evi) then None else Some newfilter
 
 (* The filter is assumed to be at least stronger than the original one *)
+
+(* [shrink_eta_pruning env evd c] eta-reduces [λ x, f x] into [f] as
+   [shrink_eta] does, but when the only occurrences of [x] in [f] are inside
+   the instances of undefined evars, these evars are first restricted so as
+   not to depend on [x] anymore. The solution is less general but this is
+   what the meta-based unification found (metas being context-free), e.g.
+   [?R x y] against [R1 ?n x y] gives [?R := R1 ?n'] rather than
+   [λ x y, R1 ?n@{x:=x; y:=y} x y], which cannot be eta-reduced. *)
+let shrink_eta_pruning evd c =
+  let exception Found of Evar.t * EConstr.t SList.t in
+  let find_evar_depending_on_rel1 evd u =
+    let rec find k t = match EConstr.kind evd t with
+      | Evar (evk, args) ->
+        let largs = Evd.expand_existential evd (evk, args) in
+        if List.exists (fun a -> EConstr.eq_constr evd a (mkRel k)) largs then
+          raise (Found (evk, args))
+        else SList.Skip.iter (find k) args
+      | _ -> EConstr.iter_with_binders evd succ find k t
+    in
+    try find 1 u; None with Found (evk, args) -> Some (evk, args)
+  in
+  let rec prune evd u =
+    if noccurn evd 1 u then Some (evd, u)
+    else match find_evar_depending_on_rel1 evd u with
+    | None -> None
+    | Some (evk, args) ->
+      let largs = Evd.expand_existential evd (evk, args) in
+      let test a = not (EConstr.eq_constr evd a (mkRel 1)) in
+      let filter = restrict_upon_filter evd evk test largs in
+      let filter = closure_of_filter ~can_drop:false evd evk filter in
+      let evd', (evk', _) = restrict_applied_evar evd (evk, args) filter NoUpdate in
+      if Evar.equal evk evk' then None (* nothing could be removed *)
+      else prune evd' (nf_evar evd' u)
+  in
+  let rec whrec evd x = match EConstr.kind evd x with
+    | Cast (c, _, _) -> whrec evd c
+    | Lambda (_, _, c) ->
+      let evd, c = whrec evd c in
+      let (f, cl) = decompose_app evd c in
+      let napp = Array.length cl in
+      if napp > 0 then
+        match EConstr.kind evd (Array.last cl) with
+        | Rel 1 ->
+          let lc = Array.sub cl 0 (napp-1) in
+          let u = mkApp (f, lc) in
+          (match prune evd u with
+           | Some (evd, u) -> evd, pop u
+           | None -> evd, x)
+        | _ -> evd, x
+      else evd, x
+    | _ -> evd, x
+  in
+  try whrec evd c with e when CErrors.noncritical e -> evd, c
+
+let solve_pattern_eqn_pruning env evd l c =
+  let c' = List.fold_right (fun a c ->
+    let c' = subst_term evd (lift 1 (of_alias a)) (lift 1 c) in
+    match a with
+      | RelAlias n ->
+          let open Context.Rel.Declaration in
+          let d = map_constr (lift n) (lookup_rel n env) in
+          mkLambda_or_LetIn d c'
+      | VarAlias id ->
+          let d = lookup_named id env in mkNamedLambda_or_LetIn evd d c'
+    )
+    l c in
+  shrink_eta_pruning evd c'
+
 let restrict_hyps ~can_drop evd evk filter candidates =
     (* What to do with dependencies?
        Assume we have x:A, y:B(x), z:C(x,y) |- ?e:T(x,y,z) and restrict on y.

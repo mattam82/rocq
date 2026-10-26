@@ -55,10 +55,12 @@ type unify_flags = {
   use_pattern_unification : bool;
   (* Enable Miller-Pfenning pattern unification *)
   presolve_evar_args : bool;
-  (* During second-order matching of [?f args] against a term, when some
-     argument is a bare evar, first instantiate it by unifying the other
-     arguments with subterms, and only abstract its syntactic occurrences
-     (as the meta-based unification did); used by tactics. *)
+  (* Compatibility with the meta-based unification, used by tactics:
+     - during second-order matching of [?f args] against a term, when some
+       argument is a bare evar, first instantiate it by unifying the other
+       arguments with subterms, and only abstract its syntactic occurrences;
+     - restrict the evars of the solution of a Miller pattern problem so that
+       it eta-reduces, as metas were context-free. *)
 }
 
 type unification_result =
@@ -171,6 +173,10 @@ val is_unification_pattern : env * int -> evar_map -> constr -> constr list ->
   constr -> alias list option
 
 val solve_pattern_eqn : env -> evar_map -> alias list -> constr -> constr
+
+(** Variant of [solve_pattern_eqn] which restricts the evars of the solution
+    so that it eta-reduces, see [presolve_evar_args]. *)
+val solve_pattern_eqn_pruning : env -> evar_map -> alias list -> constr -> evar_map * constr
 
 val noccur_evar : env -> evar_map -> Evar.t -> constr -> bool
 
