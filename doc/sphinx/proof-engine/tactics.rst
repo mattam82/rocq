@@ -961,6 +961,18 @@ Applying theorems
       :ref:`existential variables <Existential-Variables>`
       when Rocq is unable to deduce instantiations for variables, rather than failing.
 
+   .. flag:: Legacy Apply Dependency
+
+      When :tacn:`apply` unifies the conclusion of :n:`@one_term` with the
+      goal, some arguments of :n:`@one_term` appearing only in its
+      conclusion may remain uninstantiated (typically when the goal itself
+      contains existential variables). By default, :tacn:`apply` then fails
+      with an "Unable to find an instance" error, :tacn:`eapply` or an
+      explicit binding has to be used instead. When this :term:`flag` is on
+      (it is off by default), such arguments are turned into new goals, as
+      the implementation of :tacn:`apply` prior to the use of the evar-based
+      unification algorithm did.
+
    .. tacn:: apply_ho {+, @one_term_with_bindings } {? @in_hyp_as }
              eapply_ho {+, @one_term_with_bindings } {? @in_hyp_as }
 

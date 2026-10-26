@@ -44,6 +44,16 @@ type clause = {
 
 let debug_clenv = CDebug.create ~name:"clenv" ()
 
+(* When set, arguments of an applied lemma that only appear in its
+   conclusion and are not instantiated by unification with the goal are turned
+   into new goals rather than being reported as unresolved, as the meta-based
+   implementation of apply did. *)
+let { Goptions.get = legacy_apply_dependency } =
+  Goptions.declare_bool_option_and_ref
+    ~key:["Legacy";"Apply";"Dependency"]
+    ~value:false
+    ()
+
 let pr_clause ?(with_evars=false) env sigma clause =
   let prc = Termops.Internal.print_constr_env env sigma in
   let pr_hole hole = Pp.(Name.print hole.hole_name ++ str" : " ++ prc hole.hole_evar ++
@@ -688,8 +698,8 @@ let get_dependent_typeclass_holes env sigma clenv =
     else None) clenv.cl_holes
   in Evar.Set.of_list evs
 
-let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true) ?(with_ho=true) ?origsigma
-                     flags (sigma, clenv) =
+let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=true) ?(with_ho=true)
+                     ?(legacy_deps=false) ?origsigma flags (sigma, clenv) =
   let open Proofview in
   let open Proofview.Notations in
   Proofview.Goal.enter begin fun gl ->
@@ -737,8 +747,14 @@ let clenv_refine_gen ?(with_evars=false) ?(with_classes=true) ?(shelve_subgoals=
     Proofview.Unsafe.tclEVARS sigma
   in
   let () = debug_clenv (fun () -> Pp.(str"Checking dependent holes are resolved: " ++ pr_clause env sigma clenv)) in
+  (* With the legacy dependency semantics, holes appearing only in the
+     conclusion are not reported as unresolved (they are shelved below, as
+     with eapply, when they appear in other goals). *)
+  let check_clenv =
+    if legacy_deps then clenv_recompute_deps env sigma ~hyps_only:true clenv else clenv in
   Proofview.Unsafe.tclEVARS sigma <*>
-    clenv_check_dep_holes with_evars env sigma ?origsigma clenv >>= (fun deps ->
+    clenv_check_dep_holes with_evars env sigma ?origsigma check_clenv >>= (fun _ ->
+      let deps = holes_goals sigma (clenv_dep_holes clenv) in
       let () = debug_clenv (fun () -> Pp.str"Refining the goal") in
       let shelf = if shelve_subgoals then deps else [] in
       (Refine.refine ~typecheck:false (run shelf)) <*>
@@ -784,7 +800,8 @@ let clenv_refine_bindings
           debug_clenv (fun () -> Pp.str"Recomputed dependencies");
           let sigma = apply_delayed_bindings env delayed sigma in
           debug_clenv (fun () -> Pp.str"Applied delayed bindings");
-          clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?with_ho ?origsigma
+          let legacy_deps = legacy_apply_dependency () in
+          clenv_refine_gen ~with_evars ~with_classes ~shelve_subgoals ?with_ho ~legacy_deps ?origsigma
                          flags (sigma, clenv)
         with e when Pretype_errors.precatchable_exception e -> Proofview.tclZERO e))
   end
