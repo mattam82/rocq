@@ -478,7 +478,15 @@ let clenv_unify_type ?holes env sigma flags hole occs ty =
        Evarconv.solve_unif_constraints_with_heuristics
          ~flags ~with_ho:true env sigma
   | _ ->
-     let ho () =
+     (* Higher-order unification is only used as a fallback when the head of
+        the conclusion is a hole of the clause, as [w_unify] did for
+        meta-headed conclusions: for other conclusions (e.g. headed by an
+        existential variable coming from the elaboration of the applied
+        term), only first-order unification was used. *)
+     let ho_allowed = isEvar sigma ev && is_hole ev in
+     let ho e =
+       if not ho_allowed then raise e
+       else
        let sigma = Evarutil.add_unification_pb (Conversion.CUMUL,env,hole,ty) sigma in
         Evarconv.solve_unif_constraints_with_heuristics
           ~flags ~with_ho:true env sigma
@@ -558,8 +566,13 @@ let clenv_unify_type ?holes env sigma flags hole occs ty =
               at: this is not a failure of this unification if it
               introduced no new problem. *)
            if List.length (Evd.conv_pbs sigma') <= npbs then sigma'
-           else ho ())
-     | UnifFailure _ -> ho ()
+           else ho e)
+     | UnifFailure (sigma', reason) ->
+       if ho_allowed then ho (Evarconv.UnableToUnify (sigma', reason))
+       else
+         (* Same error as the one raised by the heuristics on the postponed
+            problem *)
+         Pretype_errors.error_cannot_unify env sigma' ~reason (hole, ty)
 
 
 let clenv_unify_concl env sigma flags ty clenv =

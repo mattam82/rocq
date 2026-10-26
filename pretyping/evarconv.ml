@@ -953,7 +953,14 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) flags env evd pbty
                  (fun i ->
                    if not (occur_rigidly flags env i ev tR) then
                      let i,tF =
-                       if isRel i tR || isVar i tR then
+                       if (isRel i tR || isVar i tR)
+                          (* In tactic mode, the application is kept so that
+                             the problem is only solved by first-order or
+                             (if allowed) second-order unification, as the
+                             meta-based unification did: absorbing the
+                             arguments would make it solvable by a constant
+                             function. *)
+                          && not flags.presolve_evar_args then
                          (* Optimization so as to generate candidates *)
                          let i,ev = evar_absorb_arguments env i ev lF in
                          i,mkEvar ev
