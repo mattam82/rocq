@@ -1891,7 +1891,9 @@ let apply_in_once ?(respect_opaque = false) with_delta
         Proofview.Unsafe.tclEVARS sigma <*>
         EClause.clenv_solve_clause_constraints ~flags ~with_ho:true clause >>= fun clause ->
         Proofview.tclEVARMAP >>= fun sigma ->
-        let clause = EClause.clenv_recompute_deps env sigma ~hyps_only:false clause in
+        (* Holes appearing only in the conclusion of the new hypothesis are
+           turned into goals, as with the meta-based implementation. *)
+        let clause = EClause.clenv_recompute_deps env sigma ~hyps_only:true clause in
         solve_typeclasses with_evars true <*>
         Proofview.tclEVARMAP >>= fun sigma ->
         let clause = EClause.clenv_advance sigma clause in

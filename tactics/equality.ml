@@ -1252,9 +1252,8 @@ let onEquality with_evars tac (c,lbindc) =
       with DestKO -> None
   in
   let goals = List.map_filter filter eq_clause.EClause.cl_holes in
-  let cl_args = Array.map_of_list (fun h -> h.EClause.hole_evar) eq_clause.EClause.cl_holes in
   let (eq,u,eq_args) = find_this_eq_data_decompose env sigma eq_clause.cl_concl in
-  let eq = { eq_data = (EConstr.mkIndU (Globnames.destIndRef eq.eq, u), eq.congr, s, eq_args); eq_term = mkApp (c, cl_args); eq_evar = goals } in
+  let eq = { eq_data = (EConstr.mkIndU (Globnames.destIndRef eq.eq, u), eq.congr, s, eq_args); eq_term = EClause.clenv_val eq_clause; eq_evar = goals } in
   Proofview.Unsafe.tclEVARS sigma <*> tac eq
   end
 

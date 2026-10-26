@@ -89,7 +89,14 @@ let hole_source = function
   | Name id   -> Loc.tag @@ Evar_kinds.VarInstance id
 
 let make_prod_evar ctx sigma ~args na t1 t2 =
-  let (sigma, evk) = new_pure_evar ~src:(hole_source na.binder_name)
+  (* Add a name to the evar if it comes from a named binder to make the
+     goal focusable. *)
+  let name = match na.binder_name with
+  | Name id when Evd.generate_goal_names () ->
+    Evarutil.next_evar_name (Namegen.IntroIdentifier id)
+  | _ -> None
+  in
+  let (sigma, evk) = new_pure_evar ~src:(hole_source na.binder_name) ?name
       ~typeclass_candidate:false ctx sigma
       ~relevance:na.binder_relevance t1
   in
