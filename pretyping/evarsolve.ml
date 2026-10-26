@@ -58,6 +58,7 @@ type unify_flags = {
   allowed_evars : AllowedEvars.t;
   with_cs : bool;
   use_pattern_unification : bool;
+  presolve_evar_args : bool;
 }
 
 let is_evar_allowed flags sigma evk =

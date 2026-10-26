@@ -137,8 +137,11 @@ val default_occurrence_test : allowed_evars:Evarsolve.AllowedEvars.t -> Transpar
 val default_occurrences_selection : ?allowed_evars:Evarsolve.AllowedEvars.t (* By default, all *) ->
   TransparentState.t -> int -> occurrences_selection
 
-val second_order_matching : unify_flags -> env -> evar_map ->
+val second_order_matching : ?presolve:bool -> unify_flags -> env -> evar_map ->
   EConstr.existential -> occurrences_selection -> constr -> evar_map * bool
+(** [presolve] (default [false]): first instantiate the arguments of the evar
+    that are bare evars by unifying the other arguments with subterms of the
+    term, and only abstract syntactic occurrences of the bare evars. *)
 
 (** Declare function to enforce evars resolution by using typing constraints *)
 

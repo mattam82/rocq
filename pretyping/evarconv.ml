@@ -42,6 +42,7 @@ let default_flags_of ?(subterm_ts=TransparentState.empty) ts =
     open_ts = ts; closed_ts = ts; subterm_ts;
     allowed_evars = AllowedEvars.all; with_cs = true;
     use_pattern_unification = true;
+    presolve_evar_args = false;
   }
 
 let default_flags env =
@@ -1749,7 +1750,7 @@ let thin_evars env sigma sign c =
   let c' = applyrec (env,0) c in
   (!sigma, c')
 
-let second_order_matching flags env_rhs evd (evk,args) (test,argoccs) rhs =
+let second_order_matching ~presolve flags env_rhs evd (evk,args) (test,argoccs) rhs =
   let evi = Evd.find_undefined evd evk in
   let evi = nf_evar_info evd evi in
   let env_evar_unf = evar_env env_rhs evi in
@@ -1831,6 +1832,14 @@ let second_order_matching flags env_rhs evd (evk,args) (test,argoccs) rhs =
           evsref := (evk,evty,inst,prefer_abstraction)::!evsref;
           evd, fixed, mkEvar (evk, instance)
      in
+     let test =
+       if presolve && isEvar evd c then
+         (* A bare undefined evar would unify with any subterm: only its
+            syntactic occurrences are abstracted, its value will be found by
+            unification of the other arguments. *)
+         fun _ evd c t -> (EConstr.eq_constr evd c t, evd)
+       else test
+     in
      let evd, fixed, rhs' = apply_on_subterm env_rhs evd fixed set_var test c rhs in
      debug_ho_unification (fun () ->
        Pp.(str"abstracted: " ++ prc env_rhs evd rhs'));
@@ -1840,6 +1849,32 @@ let second_order_matching flags env_rhs evd (evk,args) (test,argoccs) rhs =
   | [] -> evd, fixed, rhs in
 
   let subst = make_subst 0 (ctxt,args,argoccs) in
+
+  (* When some arguments are bare undefined evars, first unify the other
+     arguments with the subterms of the rhs so as to instantiate them, as
+     [w_unify] did by first looking for the subterms matching each argument.
+     Otherwise the bare evar would be abstracted first, and it would unify with
+     any subterm. *)
+  let evd =
+    if presolve && List.exists (fun (_,_,c,_,_,_,_) -> isEvar evd (nf_evar evd c)) subst then
+      List.fold_left (fun evd (_,_,c,_,_,_,_) ->
+        let c = nf_evar evd c in
+        if isEvar evd c || not (Evarutil.has_undefined_evars evd c) then evd
+        else
+          let () = debug_ho_unification (fun () ->
+            Pp.(str"presolve: " ++ prc env_rhs evd c ++ str" in " ++ prc env_rhs evd rhs)) in
+          (* [apply_on_subterm] drops the evar map returned by the test,
+             propagate it through the continuation. *)
+          let evdr = ref evd in
+          let test env evd c t =
+            let (b, evd') = test env evd c t in
+            let () = if b then evdr := evd' in
+            (b, evd') in
+          let keep _ fixed _ t = (!evdr, fixed, t) in
+          let evd', _, _ = apply_on_subterm env_rhs evd Evar.Set.empty keep test c rhs in
+          evd') evd subst
+    else evd
+  in
 
   let evd, _, rhs' = set_holes env_rhs evd Evar.Set.empty rhs subst in
   let rhs' = nf_evar evd rhs' in
@@ -1952,8 +1987,8 @@ let second_order_matching flags env_rhs evd (evk,args) (test,argoccs) rhs =
          with IllTypedInstance _ -> raise (TypingFailed evd)
   in abstract_free_holes evd subst
 
-let second_order_matching flags env_rhs evd (evk,args) (test,argoccs) rhs =
-  try second_order_matching flags env_rhs evd (evk,args) (test,argoccs) rhs, true
+let second_order_matching ?(presolve=false) flags env_rhs evd (evk,args) (test,argoccs) rhs =
+  try second_order_matching ~presolve flags env_rhs evd (evk,args) (test,argoccs) rhs, true
   with TypingFailed evd -> evd, false
 
 let default_evar_selection flags evd (ev,args) =
@@ -1974,7 +2009,7 @@ let second_order_matching_with_args flags env evd with_ho pbty ev l t =
     let argoccs = default_evar_selection flags evd ev in
     let test = default_occurrence_test ~allowed_evars:flags.allowed_evars flags.subterm_ts in
     let evd, b =
-      try second_order_matching flags env evd ev (test,argoccs) t
+      try second_order_matching ~presolve:flags.presolve_evar_args flags env evd ev (test,argoccs) t
       with PretypeError (_, _, NoOccurrenceFound _) -> evd, false
     in
     if b then Success evd

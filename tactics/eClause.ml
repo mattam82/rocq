@@ -315,7 +315,9 @@ let clenv_recompute_deps env sigma ~hyps_only clause =
       let (ev, _) = destEvar sigma h.hole_evar in
       let is_dep hole = occur_evar sigma ev (hole_type env sigma hole) in
       let in_hyp = List.exists is_dep holes in
-      let in_ccl = occur_evar sigma ev clause.cl_concl in
+      (* Beta-iota normalize the conclusion, which may have been instantiated
+         by higher-order unification with a constant predicate. *)
+      let in_ccl = occur_evar sigma ev (Reductionops.nf_betaiota env sigma clause.cl_concl) in
       let dep = if hyps_only then in_hyp && not in_ccl else in_hyp || in_ccl in
       let h = { h with hole_deps = dep } in
       h :: holes

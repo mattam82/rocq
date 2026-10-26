@@ -54,6 +54,11 @@ type unify_flags = {
   (* Enable canonical structure resolution during unification *)
   use_pattern_unification : bool;
   (* Enable Miller-Pfenning pattern unification *)
+  presolve_evar_args : bool;
+  (* During second-order matching of [?f args] against a term, when some
+     argument is a bare evar, first instantiate it by unifying the other
+     arguments with subterms, and only abstract its syntactic occurrences
+     (as the meta-based unification did); used by tactics. *)
 }
 
 type unification_result =
