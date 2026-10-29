@@ -372,6 +372,7 @@ sig
   val cardinal : t -> int
 end
 
+(* The cardinal of a map is the sum of the cardinals of its values *)
 module MapWithCardinal (O : OrderedType.S) (T : TypeWithCardinal) =
 struct
   module M = Map.Make(O)
@@ -379,23 +380,28 @@ struct
 
   let empty = { map = M.empty; cardinal = 0 }
   let is_empty m = M.is_empty m.map
+
+  let cardinal_of x m = match M.find_opt x m.map with
+    | Some v -> T.cardinal v
+    | None -> 0
+
   let add x k m =
     let m' = M.add x k m.map in
     if m' == m.map then m
-    else { map = m'; cardinal = m.cardinal + 1}
+    else { map = m'; cardinal = m.cardinal - cardinal_of x m + T.cardinal k }
 
   let singleton x k = add x k empty
 
   let _remove x m =
     let m' = M.remove x m.map in
     if m' == m.map then m
-    else { map = m'; cardinal = m.cardinal - 1}
+    else { map = m'; cardinal = m.cardinal - cardinal_of x m }
 
   let fold f m = M.fold f m.map
   let cardinal m = m.cardinal
 
   let union f m m' =
-    let cardinal = ref m.cardinal in
+    let cardinal = ref 0 in
     let merge_fn k x x' =
       match x, x' with
       | None, None -> None
@@ -506,7 +512,7 @@ struct
 
   let to_list = NeList.to_list
 
-  let smart_map = NeList.smart_map
+  let _smart_map = NeList.smart_map
 
   let _map = NeList.map
 
@@ -626,6 +632,14 @@ module ClausesOf = struct
 
   let filter f cls = { local = SWC.filter f cls.local; global = SWC.filter f cls.global }
 
+  let filter_map f cls =
+    let local = SWC.filter_map (f Local) cls.local in
+    let global = SWC.filter_map (f Global) cls.global in
+    if local == cls.local && global == cls.global then cls
+    else { local; global }
+
+  let mem cl cls = SWC.mem cl cls.local || SWC.mem cl cls.global
+
   let union cls cls' = 
     { local = SWC.union cls.local cls'.local; global = SWC.union cls.global cls'.global }
 
@@ -740,9 +754,9 @@ struct
     let merge_by_kprem _kprem cls cls' = merge_pclauses cls cls' in
     IntMap.union merge_by_kprem clauses clauses'
 
-  (** [shift n clauses] Shift by n the clauses.
+  (** [_shift n clauses] Shift by n the clauses.
       The resulting clauses represents (_ + k + n, ... -> concl) *)
-  let shift n clauses =
+  let _shift n clauses =
     if Int.equal n 0 then clauses else
     IntMap.fold (fun k fwd acc ->
       IntMap.add (k + n) fwd acc)
@@ -771,7 +785,12 @@ struct
         f ~kprem ~concl ~prems acc) cls acc)
       cls
 
-  let map f clauses =
+  let exists (f : kprem:int -> concl:Index.t -> prems:PartialClausesOf.t -> bool) (cls : t) : bool =
+    IntMap.exists (fun kprem cls ->
+      PMap.exists (fun concl prems -> f ~kprem ~concl ~prems) cls)
+      cls
+
+  let _map f clauses =
     let f ~kprem ~concl ~prems cls =
       let f (kconcl, prems) cls =
         let kprem, concl, kconcl, prems = f ~kprem ~concl ~kconcl ~prems in
@@ -976,7 +995,7 @@ let _pr_clause_info m ((concl, kprem) : clause_info) =
 
 type t = model
 
-let eq_pointint x x' =
+let _eq_pointint x x' =
   let (idx, k) = x and (idx', k') = x' in
   Index.equal idx idx' && Int.equal k k'
 
@@ -988,18 +1007,121 @@ let _canonical_clause (prems, (concl, k)) =
 
 let _pr_clause_idx m cl = pr_clause (pr_index_point m) cl
 
+type can_premises = (canonical_node * int) NeList.t
+type can_expr = canonical_node * int
+type can_clause = can_premises * can_expr
+
+let shrink_can_premises prems concl conclk =
+  (* The result is sorted according to the order on the [canon] indices, mentioning each
+     universe once with its largest increment, as built by [Premises.add] *)
+  let rec insert ((prem, k) as x) prems =
+    match prems with
+    | NeList.Tip ((prem', k') as p) ->
+      let c = Index.compare prem.canon prem'.canon in
+      if Int.equal c 0 then if k <= k' then prems else NeList.Tip x
+      else if c < 0 then NeList.Cons (x, prems)
+      else NeList.Cons (p, NeList.Tip x)
+    | NeList.Cons ((prem', k') as p, prems') ->
+      let c = Index.compare prem.canon prem'.canon in
+      if Int.equal c 0 then if k <= k' then prems else NeList.Cons (x, prems')
+      else if c < 0 then NeList.Cons (x, prems)
+      else
+        let prems'' = insert x prems' in
+        if prems' == prems'' then prems else NeList.Cons (p, prems'')
+  in
+  let update ((prem, k) as x) acc =
+    if Index.equal prem.canon concl.canon && k >= conclk then acc
+    else match acc with
+      | None -> Some (NeList.Tip x)
+      | Some prems -> Some (insert x prems)
+  in
+  let rec aux acc = function
+    | NeList.Tip x -> update x acc
+    | NeList.Cons (x, xs) -> aux (update x acc) xs
+  in aux None prems
+
+(** Simplify u <= max (Set, v) clauses to u <= v and filter away u <= ... u + n , ... clauses, always valid *)
+let filter_trivial_can_clause m ((prems, (concl, k as conclk)) : can_clause) : can_clause option =
+  (* Filter out `Set` from max(Set, u) -> v constraints *)
+  let setidx = Index.find Level.set m.table in
+  (* Trivial ... u + k + n ... -> u + k clause *)      
+  if NeList.exists (fun (prem, k') -> (prem == concl && k' >= k) || (concl.canon == setidx && k' >= k && k > 0)) prems then
+    None
+  else
+    match shrink_can_premises prems concl k with
+    | Some prems -> Some (prems, conclk)
+    | None -> None
+
+(** [sorted_premises prems] holds when [prems] is sorted according to the order on [Index.t],
+  mentioning each universe once, as built by [Premises.add]. *)
+let rec sorted_premises = function
+  | NeList.Tip _ -> true
+  | NeList.Cons ((idx, _), (NeList.Tip (idx', _) | NeList.Cons ((idx', _), _) as prems)) ->
+    Index.compare idx idx' < 0 && sorted_premises prems
+
+(** [is_trivial_clause setidx (prems, (concl, k))] holds when the clause is trivial,
+  in the sense of [filter_trivial_can_clause]. *)
+let is_trivial_clause setidx (prems, (concl, k)) =
+  Premises.exists (fun (prem, k') -> k' >= k && (Index.equal prem concl || (Index.equal concl setidx && k > 0))) prems
+
+(** [fwd_premises prem kprem others] are the premises of the forward clause [prem + kprem, others -> _] *)
+let fwd_premises prem kprem others =
+  match others with
+  | None -> NeList.Tip (prem, kprem)
+  | Some others -> Premises.add (prem, kprem) others
+
 let check_invariants ~(required_canonical:Level.t -> bool) model =
   let required_canonical u = required_canonical (Index.repr u model.table) in
   let n_canon = ref 0 in
+  (* The clause [prems -> concl + k], stored in the [kind] clauses of [node], only mentions canonical universes,
+     has sorted premises mentioning each universe once and is not trivial *)
+  let check_clause kind node (prems, (concl, k) as cl) =
+    let err msg =
+      CErrors.user_err Pp.(str kind ++ str" clause " ++ _pr_clause_idx model cl ++ str" of " ++
+        pr_raw_index_point model node ++ spc () ++ msg)
+    in
+    let check_canonical idx =
+      if not (PMap.mem idx model.entries) then
+        err Pp.(str"mentions the non-canonical universe " ++ pr_raw_index_point model idx)
+    in
+    check_canonical concl;
+    Premises.iter (fun (idx, _) -> check_canonical idx) prems;
+    if not (sorted_premises prems) then
+      err Pp.(str"has unsorted premises, or premises mentioning the same universe several times");
+    let canprems = NeList.map (fun (idx, k) -> (repr model idx, k)) prems in
+    match filter_trivial_can_clause model (canprems, (repr model concl, k)) with
+    | None -> err Pp.(str"is trivial")
+    | Some _ -> ()
+  in
   PMap.iter (fun idx can ->
     assert (Index.equal idx can.canon);
     assert (Index.mem (Index.repr idx model.table) model.table);
     (* assert (PMap.mem idx model.values); *)
+    ForwardClauses.fold (fun ~kprem ~concl ~prems () ->
+      PartialClausesOf.iter (fun (kconcl, others) ->
+        (* can + kprem, others -> concl + kconcl *)
+        Option.iter (fun others ->
+          if not (sorted_premises others) || Premises.exists (fun (idx, _) -> Index.equal idx can.canon) others then
+            CErrors.user_err Pp.(str"Forward clause of " ++ pr_raw_index_point model can.canon ++
+              str" has other premises " ++ Premises.pr (pr_index_point model) others ++
+              str" that are unsorted, mention a universe several times or mention " ++
+              pr_raw_index_point model can.canon))
+          others;
+        let prems = fwd_premises can.canon kprem others in
+        check_clause "Forward" can.canon (prems, (concl, kconcl));
+        (* Ensure it is registered as a backward clause of concl *)
+        let conclcan = repr model concl in
+        if not (ClausesOf.mem (kconcl, prems) conclcan.clauses_bwd) then
+          CErrors.user_err Pp.(str"Forward clause " ++ _pr_clause_idx model (prems, (concl, kconcl)) ++
+            str" of " ++ pr_raw_index_point model can.canon ++
+            str" is not registered as a backward clause of " ++ pr_raw_index_point model concl))
+        prems) can.clauses_fwd ();
     let cls = can.clauses_bwd in
     ClausesOf.iter
       (fun (k, prems) ->
         (* prems -> can + k *)
         if not (k >= 0) then CErrors.user_err Pp.(str "A conclusion has negative weight") else ();
+        check_clause "Backward" can.canon (prems, (can.canon, k));
         let check_prem (l, lk) =
           if not (lk >= 0) then CErrors.user_err Pp.(str "A premise has negative weight") else ();
           assert (PMap.mem l model.entries);
@@ -1012,8 +1134,7 @@ let check_invariants ~(required_canonical:Level.t -> bool) model =
             let can' = repr model idx in
             can' == can &&
             PartialClausesOf.exists (fun (k', prems') ->
-              let prems' = cons_opt_nelist (lcan.canon, lk) prems' in
-              Int.equal k k' && NeList.equal eq_pointint prems prems') kprem)
+              Int.equal k k' && Premises.equal prems (fwd_premises lcan.canon lk prems')) kprem)
               fwd
           | None -> false
         in
@@ -1026,6 +1147,9 @@ let check_invariants ~(required_canonical:Level.t -> bool) model =
             ++ pr_index_point model kprem ++ fnl () ++ str" prems = " ++ _pr_clause_idx model (prems, (can.canon, k)))) prems) cls;
       incr n_canon) model.entries;
   PMap.iter (fun idx (u, _local, _local_eq) ->
+    if not (sorted_premises u) then
+      CErrors.user_err Pp.(str"The substitution of " ++ pr_raw_index_point model idx ++ str" by " ++
+        pr_raw_premises model u ++ str" has unsorted premises, or premises mentioning the same universe several times");
     Premises.iter (fun (idx', k) ->
       assert (k >= 0);
       assert (PMap.mem idx' model.entries); (* The substitution is canonical *)
@@ -1414,10 +1538,6 @@ let _pr_levelmap (m : model) : Pp.t =
 let pr_model ?(local=false) model =
   Pp.(str"clauses: " ++ pr_local model.locality ++ fnl () ++ pr_clauses_all ~local model)
 
-type can_premises = (canonical_node * int) NeList.t
-type can_expr = canonical_node * int
-type can_clause = can_premises * can_expr
-
 let _pr_can_clause m (prems, conclk) =
   let open Pp in
   pr_with (pr_can m) conclk ++ str" ≤ " ++ NeList.pr_with_sep (fun () -> str", ") (pr_with (pr_can m)) prems
@@ -1433,6 +1553,9 @@ let remove_premise idx kprem prems =
         | Some l' -> Some (NeList.Cons (prem, l'))
   in aux prems
 
+(** [add_can_clause_model m cl] adds the clause [cl] to [m].
+  @requires the premises of [cl] are sorted according to the order on their [canon]
+  indices, mentioning each universe once, as produced by [filter_trivial_can_clause]. *)
 let add_can_clause_model m ((prems, (canl, conclk)) : can_clause) : (can_clause * model) option =
   let canprems = NeList.map (fun (can, k) -> (can.canon, k)) prems in
   let clof = (conclk, canprems) in
@@ -1480,67 +1603,82 @@ let in_premises idx prems =
 (** 3 Substitution in forward and backward clauses
   of a level by an expression. *)
 
-(** [subst_prem idx u prem] substitutes [idx] by [u] in a single premise [prem]. *)
-let subst_prem idx (idx', k') (prem, k as x) =
-  if Index.equal prem idx then (idx', k + k') else x
+(** [subst_fwd_clauses setidx prem idx u fwd] substitutes [idx] by [u] in the premises and conclusions of the forward clauses [fwd] of [prem].
+ Trivial clauses (see [is_trivial_clause]) are removed. If [prem] is [idx], the clauses become forward clauses of [u],
+ otherwise the increment of [prem] changes when [u] mentions [prem], as premises on the same universe are merged.
+ @param fwd A set of forward clauses of shape [prem + kprem, prems -> concl + k]. *)
+let subst_fwd_clauses setidx prem idx (idx', k' as u) fwd =
+  let mentions ~kprem:_ ~concl ~prems =
+    Index.equal concl idx ||
+    PartialClausesOf.exists (fun (_, others) -> Option.cata (in_premises idx) false others) prems
+  in
+  if not (Index.equal prem idx) && not (ForwardClauses.exists mentions fwd) then fwd else
+  let prem' = if Index.equal prem idx then idx' else prem in
+  ForwardClauses.fold
+    (fun ~kprem ~concl ~prems fwd ->
+      PartialClausesOf.fold (fun (kconcl, others) fwd ->
+        let concl', kconcl' = if Index.equal concl idx then (idx', kconcl + k') else (concl, kconcl) in
+        let prems = fwd_premises prem kprem others in
+        let prems' = Premises.subst idx (NeList.Tip u) prems in
+        if prems' == prems && not (Index.equal concl idx) then
+          ForwardClauses.add { kprem; concl; prems = PartialClausesOf.singleton (kconcl, others) } fwd
+        else if is_trivial_clause setidx (prems', (concl', kconcl')) then fwd
+        else
+          let kprem = NeList._find (fun p -> Index.equal p prem') prems' in
+          let others = remove_premise prem' kprem prems' in
+          ForwardClauses.add { kprem; concl = concl'; prems = PartialClausesOf.singleton (kconcl', others) } fwd)
+        prems fwd)
+    fwd ForwardClauses.empty
 
-(** [subst_prems idx u prems] substitutes [idx] by [u] in all premises of [prems]. *)
-let subst_prems idx u prems =
-  Premises.smart_map (subst_prem idx u) prems
+(** [subst_bwd_clauses setidx concl idx u bwd] substitute [idx] by [u] in the premises of the backward clauses [bwd] of [concl].
+  Trivial clauses (see [is_trivial_clause]) are removed.
+  @param bwd A set of backward clauses of shape [prems -> concl + k]
+  @return A set of backward clauses of shape [prems[idx/u] -> concl + k] *)
+let subst_bwd_clauses setidx concl idx u bwd  =
+  ClausesOf.filter_map (fun _local (kconcl, prems as cli) ->
+    let prems' = Premises.subst idx (NeList.Tip u) prems in
+    if is_trivial_clause setidx (prems', (concl, kconcl)) then None
+    else if prems' == prems then Some cli else Some (kconcl, prems')) bwd
 
-(** [subst_fwd_clauses idx u fwd] substitutes [idx] by [u] in the premises and conclusions of the forward clauses [fwd].
- @param fwd A set of forward clauses of shape [_, prems -> concl + k]. *)
-let subst_fwd_clauses idx (idx', k' as u) fwd =
-  ForwardClauses.map
-    (fun ~kprem ~concl ~kconcl ~prems ->
-      let prems' = Option.Smart.map (subst_prems idx u) prems in
-      if Index.equal concl idx then (kprem, idx', kconcl + k', prems')
-      else (kprem, concl, kconcl, prems')) fwd
-
-(** [subst_bwd_clauses idx u bwd] substitute [idx] by [u] in the premises of the backward clauses [bwd].
-  @param bwd A set of backward clauses of shape [prems -> _ + k]
-  @return A set of backward clauses of shape [prems[idx/u] -> _ + k] *)
-let subst_bwd_clauses idx u bwd  =
-  ClausesOf.map (fun _local (kconcl, prems as cli) ->
-    let prems' = subst_prems idx u prems in
-    if prems' == prems then cli else (kconcl, prems')) bwd
-
-(** [subst_fwd_of_prem idx u prem model] For a given premise [prem] substitute [idx] by [u]
-  in the forward clauses of its canonical representative.
+(** [subst_fwd_of_prem setidx idx u prem model] For a given premise [prem] substitute [idx] by [u]
+  in the forward clauses of its canonical representative. Nothing is done if [prem] is [idx].
   @return An updated model. *)
-let subst_fwd_of_prem idx u prem model =
+let subst_fwd_of_prem setidx idx u prem model =
+  if Index.equal prem idx then model else
   let can = repr model prem in
-  let can = { can with clauses_fwd = subst_fwd_clauses idx u can.clauses_fwd } in
-  change_node model can
+  let fwd = subst_fwd_clauses setidx can.canon idx u can.clauses_fwd in
+  if fwd == can.clauses_fwd then model
+  else change_node model { can with clauses_fwd = fwd }
 
 
-(** [subst_fwd_of_bwd idx u bwd model] For a set of backward clauses [prems -> _ + kconcl] substitute
-  [idx] by [u] in the forward clauses of [prems].
+(** [subst_fwd_of_bwd setidx idx u bwd model] For a set of backward clauses [prems -> _ + kconcl] substitute
+  [idx] by [u] in the forward clauses of [prems], except [idx] itself.
   @return An updated model. *)
-let subst_fwd_of_bwd idx u bwd model =
+let subst_fwd_of_bwd setidx idx u bwd model =
   ClausesOf.fold (fun _local (_kconcl, prems) model ->
-    let f (prem, _) model = subst_fwd_of_prem idx u prem model in
+    let f (prem, _) model = subst_fwd_of_prem setidx idx u prem model in
     Premises._fold f prems model) bwd model
 
-(** [subst_partial_clauses_of idx u cls model] For partial clauses [cls] of shape [(_, prems -> _)]
-  substitute [idx] by [u] in the forward clauses of [prems]
+(** [subst_partial_clauses_of setidx idx u cls model] For partial clauses [cls] of shape [(_, prems -> _)]
+  substitute [idx] by [u] in the forward clauses of [prems], except [idx] itself.
   @return An updated model *)
-let subst_partial_clauses_of idx u cls model =
+let subst_partial_clauses_of setidx idx u cls model =
   PartialClausesOf.fold (fun (_, prems) model ->
     Option.fold_left (fun model prems ->
-      Premises._fold (fun (prem, _) -> subst_fwd_of_prem idx u prem) prems model) model prems)
+      Premises._fold (fun (prem, _) -> subst_fwd_of_prem setidx idx u prem) prems model) model prems)
     cls model
 
-(** [subst_bwd_of_fwd_and_duplicates idx u fwd model] For forward clauses
+(** [subst_bwd_of_fwd_and_duplicates setidx idx u fwd model] For forward clauses
   [_, prems -> concl + k], this substitutes [idx] by [u] in the backward clauses
-  from [concl] and the forward clauses from [prems] in the model.
+  from [concl] and the forward clauses from [prems] in the model, except
+  for [idx] itself.
   @return An updated model *)
-let subst_bwd_of_fwd_and_duplicates idx u fwd model =
+let subst_bwd_of_fwd_and_duplicates setidx idx u fwd model =
   let f ~kprem:_ ~concl ~prems model =
-    (* This s *)
-    let model = subst_partial_clauses_of idx u prems model in
+    let model = subst_partial_clauses_of setidx idx u prems model in
+    if Index.equal concl idx then model else
     let can = repr model concl in
-    let bwd' = subst_bwd_clauses idx u can.clauses_bwd in
+    let bwd' = subst_bwd_clauses setidx can.canon idx u can.clauses_bwd in
     if bwd' == can.clauses_bwd then model
     else
       let can = { can with clauses_bwd = bwd' } in
@@ -1685,20 +1823,23 @@ let enforce_eq_can model (canu, ku as _u) (canv, kv as _v) : (canonical_node * i
   let can, model =
     let cank = (can.canon, diff) in
     let model, bwd, fwd =
-      let newbwd = ClausesOf.union (subst_bwd_clauses other.canon cank can.clauses_bwd)
-        (subst_bwd_clauses other.canon cank (ClausesOf.shift diff other.clauses_bwd))
+      let setidx = Index.find Level.set model.table in
+      let newbwd = ClausesOf.union (subst_bwd_clauses setidx can.canon other.canon cank can.clauses_bwd)
+        (subst_bwd_clauses setidx can.canon other.canon cank (ClausesOf.shift diff other.clauses_bwd))
       in
       (* prems -> other + k clauses are reindexed to become prems -> can + k clauses,
         but the forward clauses for each premise in prems still mentions the now equivalent universe *)
       let newfwd = ForwardClauses._union
-        (subst_fwd_clauses other.canon cank can.clauses_fwd)
-        (subst_fwd_clauses other.canon cank (ForwardClauses.shift diff other.clauses_fwd))
+        (subst_fwd_clauses setidx can.canon other.canon cank can.clauses_fwd)
+        (subst_fwd_clauses setidx other.canon other.canon cank other.clauses_fwd)
       in
       (* other, prems -> u + k clauses are reindexed to become can, prems -> u + k clauses,
         but the backward clauses for each u still mention other.
-        We substitute to make all clauses canonical again *)
-      let model = subst_fwd_of_bwd other.canon cank newbwd model in
-      let model = subst_bwd_of_fwd_and_duplicates other.canon cank newfwd model in
+        We substitute to make all clauses canonical again. The clauses of the other nodes
+        mentioning other are all registered in the clauses of other, so we only iterate on
+        these, before substitution, as substitution can remove trivial clauses. *)
+      let model = subst_fwd_of_bwd setidx other.canon cank other.clauses_bwd model in
+      let model = subst_bwd_of_fwd_and_duplicates setidx other.canon cank other.clauses_fwd model in
       model, newbwd, newfwd
     in
     debug_loop_checking_set_can Pp.(fun () ->
@@ -1833,36 +1974,6 @@ let _shrink_premises prems concl conclk =
       if Index.equal prem concl && k >= conclk then acc else update x acc
     | NeList.Cons ((prem, k) as x, xs) ->
       if Index.equal prem concl && k >= conclk then aux acc xs
-      else aux (update x acc) xs
-  in aux None prems
-
-let shrink_can_premises prems concl conclk =
-  (* This assumes a single Index.t * nat binding by index and preserves it *)
-  let update ((prem, k) as x) prems =
-    match prems with
-    | None -> Some (NeList.Tip x)
-    | Some prems ->
-      let rec aux prems =
-      match prems with
-      | NeList.Tip ((prem', k') as p) ->
-        if prem == prem' then
-          if k <= k' then prems
-          else NeList.Tip x
-        else NeList.Cons (x, NeList.Tip p)
-      | NeList.Cons ((prem', k') as p, prems') ->
-        if prem == prem' then
-          if k <= k' then prems
-          else NeList.Cons ((prem, k), prems')
-        else
-          let prems'' = aux prems' in
-          if prems' == prems'' then prems else NeList.Cons (p, prems'')
-      in Some (aux prems)
-  in
-  let rec aux acc = function
-    | NeList.Tip ((prem, k) as x) ->
-      if prem == concl && k >= conclk then acc else update x acc
-    | NeList.Cons ((prem, k) as x, xs) ->
-      if prem == concl && k >= conclk then aux acc xs
       else aux (update x acc) xs
   in aux None prems
 
@@ -2153,18 +2264,6 @@ let update_model ((prems, (can, k)) : can_clause) (m : model) : PSet.t * model =
       | Some (modified, wm) -> (modified, wm)
       | None -> (PSet.empty, m')
     else (PSet.empty, m)
-
-(** Simplify u <= max (Set, v) clauses to u <= v and filter away u <= ... u + n , ... clauses, always valid *)
-let filter_trivial_can_clause m ((prems, (concl, k as conclk)) : can_clause) : can_clause option =
-  (* Filter out `Set` from max(Set, u) -> v constraints *)
-  let setidx = Index.find Level.set m.table in
-  (* Trivial ... u + k + n ... -> u + k clause *)      
-  if NeList.exists (fun (prem, k') -> (prem == concl && k' >= k) || (concl.canon == setidx && k' >= k && k > 0)) prems then
-    None
-  else
-    match shrink_can_premises prems concl k with
-    | Some prems -> Some (prems, conclk)
-    | None -> None
 
 let infer_clause_extension cl minit =
   debug_loop_checking Pp.(fun () -> str "infer_clause_extension " ++ pr_clause (pr_can_expr minit) cl);
@@ -2844,9 +2943,12 @@ let constraints_for ~(kept:Level.Set.t) model (fold : 'a constraint_fold) (accu 
             | (prems, NeList.Tip concl) -> (prems, concl)
             | _ -> assert false (* The conclusion was already canonical, cannot expand to a list of universes *)
           in
-          match add_can_clause_model model cl with
-          | Some (_, m) -> m
-          | None -> model)
+          match filter_trivial_can_clause model cl with
+          | None -> model
+          | Some cl ->
+            match add_can_clause_model model cl with
+            | Some (_, m) -> m
+            | None -> model)
         bwd model)
       prems model)
     fwd model
@@ -2939,9 +3041,12 @@ let remove removed model =
             | (prems, NeList.Tip concl) -> (prems, concl)
             | _ -> assert false (* The conclusion was already canonical, cannot expand to a list of universes *)
           in
-          match add_can_clause_model model cl with
-          | Some (_, m) -> m
-          | None -> model)
+          match filter_trivial_can_clause model cl with
+          | None -> model
+          | Some cl ->
+            match add_can_clause_model model cl with
+            | Some (_, m) -> m
+            | None -> model)
         bwd model)
       prems model)
     fwd model
