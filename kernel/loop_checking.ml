@@ -213,27 +213,6 @@ struct
       | Cons (x, xs) -> append (f x) (aux xs)
     in aux l
 
-  module Smart =
-  struct
-    let concat_map (f : 'a -> 'a t) (l : 'a t) : 'a t =
-      let rec aux l =
-        match l with
-        | Tip x ->
-          (match f x with
-          | Tip x' as t' -> if x' == x then l else t'
-          | e -> e)
-        | Cons (x, xs) ->
-          let xs' = aux xs in
-          match f x with
-          | Tip x' ->
-            if x' == x then
-              if xs' == xs then l
-              else Cons (x, xs')
-            else Cons (x', xs')
-          | e -> append e xs'
-      in aux l
-  end
-
   let _mem_assq x = exists (fun y -> fst y == x)
 
   let _assq x l =
@@ -841,7 +820,9 @@ type model = {
   locality : locality;
   entries : canonical_node PMap.t; (* The canonical nodes *)
   subst : (Premises.t * locality * locality) PMap.t; (* The substitution from levels to universes:
-    localities of the substituted universe and the constraints are recorded *)
+    localities of the substituted universe and the constraints are recorded.
+    The premises of the substitution are always canonical. *)
+  subst_deps : Index.Set.t PMap.t; (* For each canonical node, the levels whose substitution mentions it *)
   values : int PMap.t option; (* values, superseding the ones attached to canonical nodes if present *)
   canonical : int; (* Number of canonical nodes *)
   table : Index.table }
@@ -852,6 +833,7 @@ let empty_model = {
   locality = Global;
   entries = PMap.empty;
   subst = PMap.empty;
+  subst_deps = PMap.empty;
   values = None;
   canonical = 0;
   table = Index.empty
@@ -859,10 +841,38 @@ let empty_model = {
 
 let empty = empty_model
 
+let add_subst_deps w prems deps =
+  NeList.fold (fun (idx, _) deps ->
+      PMap.update idx (function
+          | None -> Some (Index.Set.singleton w)
+          | Some s -> Some (Index.Set.add w s)) deps)
+    prems deps
+
+let subst_deps_of subst =
+  PMap.fold (fun w (prems, _, _) deps -> add_subst_deps w prems deps) subst PMap.empty
+
+(* [enter_equiv m u local v] makes the canonical node [u] an alias of the
+   canonical premises [v]. The substitutions mentioning [u] are rewritten to
+   mention [v] instead, so that the premises of the substitution stay
+   canonical: normalizing a level then only takes a single lookup, instead of
+   following chains of aliases whose length can grow linearly with the number
+   of equations. *)
 let enter_equiv m u local v =
+  let deps = PMap.find_opt u m.subst_deps in
+  let subst_deps = PMap.remove u m.subst_deps in
+  let subst, subst_deps = match deps with
+    | None -> m.subst, subst_deps
+    | Some ws ->
+      Index.Set.fold (fun w (subst, subst_deps) ->
+          let (prems, local, local_eq) = PMap.find w subst in
+          let prems = Premises.subst u v prems in
+          PMap.add w (prems, local, local_eq) subst, add_subst_deps w v subst_deps)
+        ws (m.subst, subst_deps)
+  in
   { locality = m.locality;
     entries = PMap.remove u m.entries;
-    subst = PMap.add u (v, local, m.locality) m.subst;
+    subst = PMap.add u (v, local, m.locality) subst;
+    subst_deps = add_subst_deps u v subst_deps;
     canonical = m.canonical - 1;
     values = Option.map (PMap.remove u) m.values;
     table = m.table }
@@ -902,16 +912,6 @@ let univ_of_can_premises model u = Universe.unrepr (NeList.to_list (NeList.map (
 
 let univ_of_premises model u = Universe.unrepr (NeList.to_list (NeList.map (expr_of_premise model) u))
 
-let rec canonical_premise m (u, k) : Premises.t =
-  match PMap.find u m.entries with
-  | can -> NeList.Tip (can.canon, k)
-  | exception Not_found ->
-    match PMap.find u m.subst with
-    | (p, _local, _localeq) -> canonical_premises m (Premises.shift k p)
-    | exception Not_found -> raise (Undeclared (Index.repr u m.table))
-and canonical_premises m p =
-  NeList.Smart.concat_map (canonical_premise m) p
-
 let normalize m l =
   match Index.find l m.table with
   | exception Not_found -> None
@@ -920,15 +920,8 @@ let normalize m l =
     | _can -> None (* Already in canonical form *)
     | exception Not_found ->
       match PMap.find idx m.subst with
-      | (p, _local, _localeq) ->
-        let prems =  canonical_premises m p in
-        Some (univ_of_premises m prems)
+      | (p, _local, _localeq) -> Some (univ_of_premises m p) (* [p] is canonical *)
       | exception Not_found -> None
-
-let normalize_subst model =
-  let subst =
-    PMap.map (fun (u, locality, locality_eq) -> canonical_premises model u, locality, locality_eq) model.subst
-  in { model with subst }
 
 let refresh_can_expr m (u, k) = repr_expr m (u.canon, k)
 
@@ -1035,7 +1028,8 @@ let check_invariants ~(required_canonical:Level.t -> bool) model =
   PMap.iter (fun idx (u, _local, _local_eq) ->
     Premises.iter (fun (idx', k) ->
       assert (k >= 0);
-      assert (PMap.mem idx' model.entries || PMap.mem idx' model.subst); (* Lazy substitution *)
+      assert (PMap.mem idx' model.entries); (* The substitution is canonical *)
+      assert (Index.Set.mem idx (PMap.find idx' model.subst_deps));
       assert (Index.mem (Index.repr idx' model.table) model.table)) u;
       (* The clauses should not mention aliases *)
     assert (not (required_canonical idx))) model.subst
@@ -1413,7 +1407,7 @@ let _pr_levelmap (m : model) : Pp.t =
     let point = Index.repr u m.table in
     Level.raw_pr point ++ str" -> " ++ pr_opt int value) (PMap.bindings m.entries)) ++ fnl () ++
   h (prlist_with_sep fnl (fun (u, (e, _, _)) ->
-    let value = NeList.concat_map_with max (expr_value m) (canonical_premises_repr m e) in
+    let value = NeList.concat_map_with max (expr_value m) (repr_premises m e) in
     let point = Index.repr u m.table in
     Level.raw_pr point ++ str" -> " ++ pr_opt int value) (PMap.bindings m.subst))
 
@@ -2348,7 +2342,7 @@ let enforce_constraint (u, k, v) (m : t) = enforce u k v m
 
 exception AlreadyDeclared
 
-let add_model ?(rigid=false) u { locality; entries; subst; table; values; canonical } =
+let add_model ?(rigid=false) u { locality; entries; subst; subst_deps; table; values; canonical } =
   let idx, table =
     if Index.mem u table then
       let idx = Index.find u table in
@@ -2359,7 +2353,7 @@ let add_model ?(rigid=false) u { locality; entries; subst; table; values; canoni
   let can = { canon = idx; value = 0; local = locality; rigid;
     clauses_fwd = ForwardClauses.empty; clauses_bwd = ClausesOf.empty } in
   let entries = PMap.add idx can entries in
-  idx, { locality; entries; subst; table; values; canonical = canonical + 1; }
+  idx, { locality; entries; subst; subst_deps; table; values; canonical = canonical + 1; }
 
 let add ?rigid u model =
   let _idx, model = add_model ?rigid u model in
@@ -2538,7 +2532,13 @@ let set_can (can,k) u model =
   in
   let fwd = can.clauses_fwd in
   let bwd = can.clauses_bwd in
-  let uprems = NeList.map (fun (can, k) -> can.canon, k) u in
+  (* [u] can mention the same universe several times, e.g. [l, l+1]: the
+     premises of the substitution mention each universe once, as expected by
+     [Premises.subst] *)
+  let uprems = match NeList.map (fun (can, k) -> can.canon, k) u with
+    | NeList.Tip _ as p -> p
+    | NeList.Cons (e, p) -> NeList.fold Premises.add p (NeList.Tip e)
+  in
   debug_loop_checking_set_can Pp.(fun () ->
       str"set_can " ++ pr_index_point model (can.canon, k) ++ 
       str" = " ++ Premises.pr (pr_index_point model) uprems ++
@@ -2769,7 +2769,6 @@ let constraints_of model ?(only_local = false) fold acc =
   let equivs_of u (v, local, local_eq) equiv =
     if only_local && local_eq == Global then equiv else
     let u = Index.repr u model.table in
-    let v = canonical_premises model v in
     let v = univ_of_premises model v in
     Level.Map.add u (local, v) equiv
   in
@@ -2918,12 +2917,10 @@ let remove_from_model idxs model =
   in
   let entries = PMap.filter_map f model.entries in
   let subst = PMap.filter_map feq model.subst in
-  { model with entries; subst; canonical = PMap.cardinal entries }
+  { model with entries; subst; subst_deps = subst_deps_of subst; canonical = PMap.cardinal entries }
 
 let remove removed model =
   let removed = Level.Set.fold (fun u accu -> PSet.add (Index.find u model.table) accu) removed PSet.empty in
-  (** Ensure the substitution goes to canonical universes *)
-  let model = normalize_subst model in
   let remove_can idx model =
     let can = repr model idx in
     assert (Index.equal can.canon idx);
@@ -2958,7 +2955,7 @@ let remove removed model =
   in
   (* At this point the clauses that don't mention removed universes are enough to
      derive the clauses between kept universes *)
-  let model = PSet.fold remove_can removed { model with subst } in
+  let model = PSet.fold remove_can removed { model with subst; subst_deps = subst_deps_of subst } in
   remove_from_model removed model
 
 let domain model = Index.dom model.table
@@ -3010,7 +3007,6 @@ let universe_of_premise model prem =
     NeList.fold (fun (l, k) acc -> Universe.sup (univ_of_expr model (l, k)) acc) xs (univ_of_expr model e)
 
 let repr ~local model =
-  let model = normalize_subst model in
   let acc =
     PMap.fold (fun idx can acc ->
       let conclp = Index.repr idx model.table in
@@ -3045,7 +3041,7 @@ let valuation_of_model (m : model) =
   let mmax = Option.default 0 (model_max m) in
   let valm = PMap.map (fun e -> mmax - Option.get (canonical_value m e)) m.entries in
   let equivsm = PMap.map (fun (v, _, _) ->
-    let v = canonical_premises_repr m v in
+    let v = repr_premises m v in
     let value = NeList.fold (fun (e, k) acc -> max (Option.get (canonical_value m e) - k) acc) v 0 in
     mmax - value) m.subst
   in

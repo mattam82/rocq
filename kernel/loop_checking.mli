@@ -57,8 +57,6 @@ val enforce_constraint : UnivConstraint.t -> t -> (t * level_equivalences) optio
   @return A canonical universe: each level in the universe is canonical w.r.t. the given model. *)
 val normalize : t -> Level.t -> Universe.t option
 
-val normalize_subst : t -> t
-
 exception InconsistentEquality
 exception OccurCheck
 exception NotCanonical
