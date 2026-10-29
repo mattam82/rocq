@@ -449,8 +449,15 @@ let universes_of_nf acc c = Vars.sort_and_universes_of_constr ~init:acc (EConstr
    extension going through a new universe which is not part of it. We hence
    only restrict this delta, which is computed once for all the terms whose
    extension is computed (by partially applying [univ_extension ~base sigma]),
-   instead of the whole local universe context of [sigma]. *)
+   instead of the whole local universe context of [sigma].
+   When [sigma] has the universe state of [base], the extension is empty: we
+   then avoid computing the context sets, which is costly. *)
 let univ_extension ~base sigma =
+  if Evd.ustate base == Evd.ustate sigma then fun _ ->
+    { ext_sorts = Sorts.QContextSet.empty;
+      ext_rigid = Univ.Level.Set.empty; ext_flexible = Univ.Level.Set.empty;
+      ext_constraints = Univ.UnivConstraints.empty }
+  else
   let base_graph = Evd.universes base in
   let (base_qvars, base_levels), (base_qcst, base_ucst) = Evd.sort_context_set base in
   let (_, levels), (qcst, ucst) = Evd.sort_context_set sigma in
