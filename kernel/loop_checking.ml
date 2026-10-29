@@ -2673,6 +2673,14 @@ let set_can cank u model =
       let equivs = unrepr_equivalences model equivs in
       model, equivs
 
+let clause_count m l =
+  match Index.find l m.table with
+  | exception Not_found -> 0
+  | idx ->
+    match PMap.find_opt idx m.entries with
+    | Some can -> ForwardClauses.cardinal can.clauses_fwd + ClausesOf.cardinal can.clauses_bwd
+    | None -> 0
+
 let set lvl u model =
   let cank = canonical_repr_level_expr model (lvl, 0) in
   let cank =

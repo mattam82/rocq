@@ -1071,6 +1071,13 @@ let process_constraints ?src uctx cstrs =
     if Level.equal l' r' then local
     else
       if is_flexible local l' then
+        (* When both are flexible, instantiate the one with fewer constraints: instantiating a
+           variable moves all its constraints to the other one, so instantiating the one which
+           accumulated many (e.g. lower bounds) each time it is equated with a fresh one is quadratic *)
+        if is_flexible local r' &&
+           UGraph.clause_count local.universes r' < UGraph.clause_count local.universes l' then
+          instantiate_variable r' (Universe.make l') local
+        else
         instantiate_variable l' (Universe.make r') local
       else if is_flexible local r' then
         instantiate_variable r' (Universe.make l') local

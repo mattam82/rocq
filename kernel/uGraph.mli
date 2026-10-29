@@ -88,6 +88,9 @@ exception OccurCheck
    *)
 val set : Level.t -> Universe.t -> t -> t * level_equivalences
 
+(** [clause_count g l] is the number of constraints on [l] in [g], the cost of [set l _ g] *)
+val clause_count : t -> Level.t -> int
+
 exception AlreadyDeclared
 val add_universe : Level.t -> strict:bool -> rigid:bool -> t -> t
 (** Adds a universe to the graph, ensuring it is >= or > (if [strict = true]) Set.

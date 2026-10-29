@@ -70,6 +70,11 @@ that are also made equal by the new constraint and are also substituted by [u] i
   @raise NotCanonical if the given level to set is not canonical *)
 val set : Level.t -> Universe.t -> t -> t * level_equivalences
 
+(** [clause_count m l] is the number of clauses of the canonical node of [l]
+  (0 if [l] is not declared or is not canonical): an estimate of the cost of
+  [set l _ m], which moves all of them. *)
+val clause_count : t -> Level.t -> int
+
 type extended_constraint_type =
   | ULe | ULt | UEq
 

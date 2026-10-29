@@ -155,6 +155,8 @@ let set l u g =
   let g', equivs = G.set l u g.graph in
   { g with graph = g' }, equivs
 
+let clause_count g l = G.clause_count g.graph l
+
 exception AlreadyDeclared = G.AlreadyDeclared
 let add_universe u ~strict ~rigid g =
   let graph = G.add ~rigid u g.graph in
