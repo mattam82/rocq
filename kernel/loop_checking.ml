@@ -2089,11 +2089,7 @@ let _min_can_premise model prem =
 let update_can_premises model prem =
   let g (model, canset) (l, k) =
     match canonical_value model l with
-    | Some v -> let newv = v - k in
-      if newv < 0 then
-        let canset = CanSet.add l.canon l.clauses_fwd canset in
-        ((update_model_value model l (Some k), canset), 0 (* k - k *)) (* Force enabling this l + k atom *)
-      else ((model, canset), newv)
+    | Some v -> ((model, canset), v - k)
     | None -> raise VacuouslyTrue
   in
   let f prem (model, minl) =
@@ -3261,13 +3257,16 @@ let pmap_to_point_map table pmap =
     Level.Map.add p v acc)
     pmap Level.Map.empty
 
+(** [valuation_of_model m] is the valuation of the universes in the natural numbers given by the
+  model [m], as in MetaRocq: values may be negative, and are shifted by the value of [Set], the
+  largest one as [Set] is below all universes. A universe [u] of value [v] is mapped to
+  [value(Set) - v], and an alias [u = max(e_i + k_i)] to the maximum of the [e_i + k_i]. *)
 let valuation_of_model (m : model) =
-  let mmax = Option.default 0 (model_max m) in
-  let valm = PMap.map (fun e -> mmax - Option.get (canonical_value m e)) m.entries in
+  let setv = Option.get (canonical_value m (PMap.find (Index.find Level.set m.table) m.entries)) in
+  let valm = PMap.map (fun e -> setv - Option.get (canonical_value m e)) m.entries in
   let equivsm = PMap.map (fun (v, _, _) ->
-    let v = repr_premises m v in
-    let value = NeList.fold (fun (e, k) acc -> max (Option.get (canonical_value m e) - k) acc) v 0 in
-    mmax - value) m.subst
+    let expr_valuation (e, k) = setv - Option.get (canonical_value m e) + k in
+    Premises.fold_ne (fun e acc -> max (expr_valuation e) acc) expr_valuation (repr_premises m v)) m.subst
   in
   Level.Map.union (fun _ x y -> Some (max x y))
     (pmap_to_point_map m.table valm)

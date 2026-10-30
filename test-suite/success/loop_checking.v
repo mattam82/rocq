@@ -165,6 +165,18 @@ Fail Check Constraint n3 <= n1+2.
 Fail Check Constraint n1+4 <= n3.
 Fail Check Constraint 5 <= n3.         (* n1 = 1, n2 = 2, n3 = 4 *)
 
+(** * Consistent constraints on small graphs *)
+
+(* Updating all the universes of a small graph is not a loop: enforcing these constraints in
+   this order, or restricting them to print the subgraph, used to fail *)
+Universes w0 w1 w2 w3 w4.
+Constraint w3+1 <= w2, w2+1 <= w0+1, w2+1 <= w4, w4+1 <= max(w2+1, w0),
+  w3 <= max(w1, w4), w0 <= w1, w3 <= max(w2, w4).
+Print Universes Subgraph (w0 w1 w2 w3 w4).
+(* w4+1 <= max(w2+1, w0) with w2 < w4 gives w4 < w0 *)
+Check Constraint w3+2 <= w4, w2 <= w0, w4 < w0.
+Fail Check Constraint w4+2 <= w0.     (* w3 = 1, w2 = 2, w4 = 3, w0 = w1 = 4 *)
+
 (** * Stress: long chains *)
 
 (* p0 < p1 < ... < p29 *)
