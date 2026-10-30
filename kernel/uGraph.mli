@@ -145,6 +145,10 @@ val subst : ?local:bool -> t -> (locality * Universe.t) Level.Map.t
    N.B.: slighty expensive to compute, better use [normalize] below. *)
 
 val switch_locality : Level.t -> t -> t
+
+(** [local_status l g] tells if [l] is a local universe of [g], or a local alias, as
+  considered by [constraints_of_universes ~only_local:true] *)
+val local_status : Level.t -> t -> Loop_checking.local_status
 (** Turn a local universe into a non-local one and conversely. *)
 
 (** {6 Dumping} *)

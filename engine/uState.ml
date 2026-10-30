@@ -612,6 +612,16 @@ let univ_context_set uctx : Univ.ContextSet.t =
   in
   lvls, univ_cstrs
 
+(* [Level.Set.mem l (Univ.ContextSet.levels (univ_context_set uctx))], without
+   computing the constraints *)
+let is_context_level uctx l =
+  let demoted = Level.Set.mem l (fst uctx.demoted_local_context) in
+  let local = Level.Set.mem l uctx.local_variables in
+  match UGraph.local_status l uctx.universes with
+  | Loop_checking.LocalNode -> not demoted
+  | Loop_checking.LocalAlias -> local
+  | Loop_checking.NotLocal -> local && not demoted
+
 let univ_context_set uctx =
   let ctx = univ_context_set uctx in
   debug Pp.(fun () -> str"Rigid context set of " ++ pr ~local:true uctx ++ fnl () ++ str" = " ++ Univ.ContextSet.pr Level.raw_pr ctx);

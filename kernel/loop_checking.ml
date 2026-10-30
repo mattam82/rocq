@@ -3087,6 +3087,19 @@ let switch_locality l model =
   let can = repr model (Index.find l model.table) in
   change_node model { can with local = flip_locality can.local }
 
+type local_status = NotLocal | LocalNode | LocalAlias
+
+let local_status l model =
+  match Index.find l model.table with
+  | exception Not_found -> NotLocal
+  | idx ->
+    match PMap.find_opt idx model.entries with
+    | Some can -> if can.local == Local then LocalNode else NotLocal
+    | None ->
+      match PMap.find_opt idx model.subst with
+      | Some (_, _, locality_eq) -> if locality_eq == Local then LocalAlias else NotLocal
+      | None -> NotLocal
+
 let is_local l model =
   let idx = Index.find l model.table in
   try let can = repr model idx in

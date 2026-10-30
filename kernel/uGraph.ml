@@ -165,6 +165,8 @@ let add_universe u ~strict ~rigid g =
 
 let switch_locality u g = { g with graph = G.switch_locality u g.graph }
 
+let local_status u g = G.local_status u g.graph
+
 let check_declared_universes g l =
   G.check_declared g.graph l
 

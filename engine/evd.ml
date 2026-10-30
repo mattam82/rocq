@@ -1152,7 +1152,7 @@ let is_eq_sort s1 s2 =
 let universe_rigidity evd l =
   let uctx = evd.universes in
   (* XXX why are we considering all locals to be flexible here? *)
-  if Univ.Level.Set.mem l (Univ.ContextSet.levels (UState.universe_context_set uctx)) then
+  if UState.is_context_level uctx l then
     UnivFlexible
   else UnivRigid
 

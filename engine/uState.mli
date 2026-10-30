@@ -55,6 +55,10 @@ val union : t -> t -> t
 
 val universe_context_set : t -> Univ.ContextSet.t
 
+val is_context_level : t -> Level.t -> bool
+(** [is_context_level uctx l] is [Level.Set.mem l (ContextSet.levels (universe_context_set uctx))],
+    computed without the constraints *)
+
 val sort_context_set : t -> UnivGen.sort_context_set
 (** The local context of the state, i.e. a set of bound variables together
     with their associated constraints. *)

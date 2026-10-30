@@ -116,6 +116,12 @@ val switch_locality : Level.t -> t -> t
 
 val is_local : Level.t -> t -> bool
 
+type local_status = NotLocal | LocalNode | LocalAlias
+
+(** [local_status l m] tells if [l] is a local canonical universe, or an alias whose
+  equation is local, as considered by [constraints_of ~only_local:true]. *)
+val local_status : Level.t -> t -> local_status
+
 (* val choose : (Level.t -> bool) -> t -> Level.t -> Level.t option *)
 
 type 'a simplification_result =
