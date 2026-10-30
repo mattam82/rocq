@@ -93,6 +93,7 @@
 ; in _build_ci (by make ci-<project>)
 (dirs (:standard _build_ci))
 (subdir _build_ci
- (dirs stdlib equations elpi hierarchy_builder vsrocq)
+ (dirs stdlib equations elpi hierarchy_builder vsrocq rocq_lsp)
  ; skip the client, whose node_modules contains a symlink back to it
- (subdir vsrocq (dirs language-server)))
+ (subdir vsrocq (dirs language-server))
+ (subdir rocq_lsp (dirs :standard \ editor)))

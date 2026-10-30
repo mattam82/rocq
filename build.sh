@@ -5,7 +5,7 @@
 #
 # Usage: ./build.sh [-n] [target...] [-- dune-args...]
 #
-# Targets (all by default): stdlib equations elpi hb vsrocq vsrocq-client
+# Targets (all by default): stdlib equations elpi hb vsrocq vsrocq-client rocq_lsp
 # (a ci- prefix is accepted, e.g. ci-elpi). Rocq itself is always built.
 # Missing CI projects are downloaded as `make ci-<target>` would do.
 #
@@ -27,7 +27,7 @@
 
 set -e
 
-ALL_TARGETS="stdlib equations elpi hb vsrocq vsrocq-client"
+ALL_TARGETS="stdlib equations elpi hb vsrocq vsrocq-client rocq_lsp"
 
 cd "$(dirname "$0")"
 ROOT=$PWD
@@ -148,6 +148,7 @@ for t in "${targets[@]}"; do
     elpi) dune_targets+=(_build_ci/elpi/rocq-elpi.install) ;;
     hb) dune_targets+=(_build_ci/hierarchy_builder/rocq-hierarchy-builder.install) ;;
     vsrocq) dune_targets+=(_build_ci/vsrocq/language-server/vsrocq-language-server.install) ;;
+    rocq_lsp) dune_targets+=(_build_ci/rocq_lsp/coq-lsp.install) ;;
   esac
 done
 
