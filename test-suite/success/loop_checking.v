@@ -63,6 +63,13 @@ Fail Check Constraint d1 < d2.
 Fail Check Constraint d4 <= d1.
 Fail Check Constraint d1+2 <= d4.     (* d1 = d2 = d3 = 1, d4 = 2 *)
 
+(* A cycle with a slack clause s2 <= s4+1: merging the cycle must not equate s2 and s4+1 *)
+Universes s1 s2 s3 s4.
+Constraint s1 <= s2, s2 <= s3, s3 <= s4, s2 <= s4+1, s4 <= s1.
+Check Constraint s1 = s2, s2 = s3, s3 = s4, s2 <= s4+1.
+Fail Check Constraint s2 = s4+1.
+Fail Check Constraint s4+1 <= s2.     (* s1 = s2 = s3 = s4 = 1 *)
+
 (* Equality through max: max(e1, e2) <= e3 and e3 <= e1 give e1 = e3 and e2 <= e1 *)
 Universes e1 e2 e3.
 Constraint max(e1, e2) <= e3, e3 <= e1.

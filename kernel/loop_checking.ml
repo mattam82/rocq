@@ -1897,17 +1897,7 @@ struct
     CList.compare compare_can_expr x y
 end
 
-module PathSet =
-struct
-  include Set.Make(Path)
-
-  let filter_map p l =
-    fold (fun x acc ->
-      match p x with
-      | None -> remove x acc
-      | Some x' -> if x' == x then acc else add x' (remove x acc)) l l
-
-end
+module PathSet = Set.Make(Path)
 
 module CN = struct
   type t = canonical_node
@@ -1920,7 +1910,6 @@ module Status = struct
 
   type status =
     | Processing
-    | Merged of PathSet.t
     | NonMerged
 
   type t = status M.t
@@ -1981,22 +1970,6 @@ let _shrink_premises prems concl conclk =
 let refresh_can_premises model prems =
   Premises._map (refresh_can_expr model) prems
 
-let pr_path model path =
-  let open Pp in
-  prlist_with_sep spc (pr_can_expr model) path
-
-let pr_paths model paths =
-  let open Pp in
-  if PathSet.is_empty paths then str"∅"
-  else str"{ " ++ Pp.prlist_with_sep (fun () -> Pp.str ", ") (pr_path model) (PathSet.elements paths) ++ str" }"
-
-let _pr_status model s =
-  let open Pp in
-  match s with
-  | Status.Processing -> str "being processed"
-  | Status.Merged ps -> str "merged with paths: " ++ pr_paths model ps
-  | Status.NonMerged -> str "not merged"
-
 let find_loop can path =
   let rec aux path =
     match path with
@@ -2025,105 +1998,6 @@ let intersect_psets p p' =
   in
   PathSet.fold fold p PathSet.empty
 
-let chop_at can path =
-  let rec aux = function
-    | [] -> None
-    | hd :: tl ->
-      if eq_can_expr can hd then Some ([hd], tl)
-      else match aux tl with
-      | Some (pref, suff) -> Some (hd :: pref, suff)
-      | None -> None
-  in aux path
-
-let replace_path_prefix can newp oldp =
-  match chop_at can oldp with
-  | None -> None
-  | Some (pref, suff) ->
-    let newsuff = CList.intersect eq_can_expr newp suff in
-    Some (pref @ newsuff)
-
-let replace_prefix_if_included can path ps =
-  let filter path' = replace_path_prefix can path path' in
-  PathSet.filter_map filter ps
-
-(** [find_to_merge_bwd model status u v] Search for an equivalence class of universes backward from u to v.
-  @assumes u -> v is consistent *)
-let find_to_merge_bwd model (status : Status.t) prems (canv, kv) =
-  let canvalue = defined_expr_value model (canv, kv) in
-  let rec backward status path (can, k) : Status.t * PathSet.t =
-    match Status.find status can with
-    | cstatus ->
-      (match cstatus with
-      | Status.Processing ->
-        (match find_loop can path with
-        | Some path -> status, PathSet.singleton path
-        | None -> status, PathSet.empty)
-      | Status.Merged ps ->
-        (** This level was previously merged coming from a potentially different path, e.g.
-            With constraints (canv <= ) x <= prefix <= u <= ... <= canv  /\ y <= prefix' <= u
-            Searching from max(x,y) to canv
-            When we find u from y :: prefix' we can reuse the paths merged through u that are
-            included in prefix'
-            *)
-        let merged = replace_prefix_if_included (can,k) path ps in
-        let status = Status.(replace status can (Merged merged)) in
-        status, merged
-      | Status.NonMerged -> status, PathSet.empty)
-    | exception Not_found ->
-      let isv = can == canv && Int.equal k kv in
-      let domerge = isv || Premises.exists (fun (canu, ku) -> (can == canu && Int.equal k ku)) prems in
-      let path = ((can, k) :: path) in
-      let merge = if domerge then PathSet.singleton path else PathSet.empty in
-      if isv then status, merge else
-      let cls = can.clauses_bwd in
-      if ClausesOf.is_empty cls then Status.replace status can Status.NonMerged, merge else begin
-        let status = Status.replace status can Status.Processing in
-        let merge_fn _local (clk, prems) (status, merge) =
-          (* Ensure there is indeed a backward clause of shape canv -> can *)
-          (* prems -> can + clk *)
-          let status, mergeprem = backward_premises k clk (repr_premises model prems) (status, path) in
-          status, PathSet.union merge mergeprem
-        in
-        let status, merge = ClausesOf.fold merge_fn cls (status, merge) in
-        if PathSet.is_empty merge then
-          Status.add can Status.NonMerged status, merge
-        else
-          let status = Status.add can (Status.Merged merge) status in
-          status, merge
-      end
-  and backward_premises k clk prems (status, path) =
-    let merge_prem status (prem, kprem) =
-      let p = (prem, kprem + (k - clk)) in
-      (* Stay in the same equivalence class *)
-      let premvalue = defined_expr_value model p in
-      if Int.equal premvalue canvalue then
-        (* prem + kprem -> can + clk      , with k >= clk implies
-            prem + kprem + (k - clk) -> can + k by upwards closure with shifting *)
-          backward status path p
-      else status, PathSet.empty
-    in
-    match prems with
-    | NeList.Tip p -> merge_prem status p
-    | NeList.Cons (p, ps) ->
-      (* Multiple premises: we will merge the intersection of merged universes in each possible path,
-         iff all premises are mergeable. *)
-      let fold prem (status, merge) =
-        if not (PathSet.is_empty merge) then
-          let status, mergeprem = merge_prem status prem in
-          if not (PathSet.is_empty mergeprem) then
-            status, intersect_psets mergeprem merge
-          else (* At least one premise is not bounded by v *)
-            status, mergeprem
-        else status, merge
-      in
-      NeList.fold fold ps (merge_prem status p)
-  in
-  let _status, merge = backward_premises 0 0 prems (status, []) in
-  if PathSet.is_empty merge then []
-  else
-    let merge_fn p acc = if List.length p > 1 then p :: acc else acc in
-    PathSet.fold merge_fn merge []
-
 (** [get_explanation model prems concl] computes the path [concl -> prems] backward from prems, that make [prems -> concl] inconsistent
 
     @requires prems -> concl is inconsistent
@@ -2137,7 +2011,6 @@ let get_explanation model prems (canv, kv) =
         (match find_loop can path with
         | Some path -> status, PathSet.singleton path
         | None -> status, PathSet.empty)
-      | Status.Merged _ -> assert false (* No merging in get_explanation *)
       | Status.NonMerged -> status, PathSet.empty)
     | exception Not_found ->
       let isv = can == canv && k <= kv in
@@ -2195,26 +2068,6 @@ let get_explanation model prems (canv, kv) =
     PathSet.fold merge_fn merge []
 
 type equivalences = (Index.t * (Index.t * int)) list
-
-(** [simplify_clauses_between model u v] Checks if [v <= u] holds, in which case it
-  merges the equivalence classes of universes between [u] and [v]. If [v] is the lub
-  of [v1..vn], they might not be merged while other universes between [u] and [v] are merged.
-    @param model Assumes [u <= v] holds already
-    @return a potentially modified model, without changing any values *)
-let simplify_clauses_between model u prems : t * equivalences =
-  let premsmax = (Premises._fold (fun u m -> max_opt (expr_value model u) m) prems None) in
-  if not (Option.equal Int.equal premsmax (expr_value model u)) then
-      (* We know v -> u and check for u -> v, this can only be true if both expressions
-        already have the same value *)
-    model, []
-  else
-    let status = Status.empty in
-    let equiv = find_to_merge_bwd model status prems u in
-    let make_equiv (model, equivs) path =
-      let m, equivs' = make_equiv model path in
-      m, equivs' @ equivs
-    in
-    List.fold_left make_equiv (model,[]) equiv
 
 type 'a check_function = t -> 'a -> 'a -> bool
 
@@ -2330,6 +2183,99 @@ let check_one_clause_complete model prems concl k =
       | Some m -> aux m prems
   in
   aux model (NeList.to_list prems)
+
+(** [find_to_merge model prems (canv, kv)] For a clause [prems -> canv + kv] of [model], whose
+  values make [max(prems)] and [canv + kv] equal, computes the universes [x + kx] such that
+  [max(prems) <= x + kx <= canv + kv], which are all equal to [canv + kv]. The result is a list
+  starting with [canv + kv], or [[]] if there is no other such universe.
+  In any model, the clauses between equal universes hold with equality: they are tight, and
+  the increment [kx] of each universe [x] is determined by its value. For a single premise
+  [p + kp], these universes are the ones reachable from [p + kp] through tight clauses from
+  which [canv + kv] is reachable. For several premises, they are the ones below [canv + kv]
+  through tight clauses that entail all the premises. Only the clauses with a single premise
+  are followed, so that the search is complete on graphs of clauses with single premises. *)
+let find_to_merge model prems (canv, kv) =
+  let value = defined_expr_value model (canv, kv) in
+  let tight x = Int.equal (defined_expr_value model x) value in
+  (* [below within todo d] adds to [d] the universes below the ones of [todo] through the tight
+     clauses [concl + kconcl <= can + kprem], among the ones satisfying [within] *)
+  let rec below within todo d =
+    match todo with
+    | [] -> d
+    | (can, k) :: todo ->
+      let todo, d = ForwardClauses.fold (fun ~kprem ~concl ~prems acc ->
+          PartialClausesOf.fold (fun (kconcl, others) (todo, d as acc) ->
+              match others with
+              | Some _ -> acc
+              | None ->
+                (* concl + kconcl <= can + kprem gives concl + (kconcl - kprem + k) <= can + k *)
+                let x = (repr model concl, kconcl - kprem + k) in
+                if PMap.mem concl d || not (within x) then acc
+                else (x :: todo, PMap.add concl x d))
+            prems acc)
+          can.clauses_fwd (todo, d)
+      in
+      below within todo d
+  in
+  (* [above todo f] adds to [f] the universes above the ones of [todo] through the tight clauses
+     [can + c <= q + kq] *)
+  let rec above todo f =
+    match todo with
+    | [] -> f
+    | (can, k) :: todo ->
+      let todo, f = ClausesOf.fold (fun _local (c, prems) (todo, f as acc) ->
+          match prems with
+          | NeList.Cons _ -> acc
+          | NeList.Tip (q, kq) ->
+            let y = (repr model q, kq + k - c) in
+            if PMap.mem q f || not (tight y) then acc
+            else (y :: todo, PMap.add q y f))
+          can.clauses_bwd (todo, f)
+      in
+      above todo f
+  in
+  let members = match prems with
+    | NeList.Tip (p, _ as pk) ->
+      if not (tight pk) then [] else
+      let f = above [pk] (PMap.singleton p.canon pk) in
+      if not (PMap.mem canv.canon f) then []
+      else
+        (* The increment found going down must be the one of [x] in [f]: the clause is tight *)
+        let within (x, k) =
+          match PMap.find_opt x.canon f with
+          | Some (_, k') -> Int.equal k k'
+          | None -> false
+        in
+        let d = below within [(canv, kv)] (PMap.singleton canv.canon (canv, kv)) in
+        PMap.fold (fun _ x acc -> x :: acc) d []
+    | NeList.Cons _ ->
+      (* The universes [t + kt] below [canv + kv] such that [p + kp <= t + kt] for all premises *)
+      let d = below tight [(canv, kv)] (PMap.singleton canv.canon (canv, kv)) in
+      let above_prem (t, kt) (p, kp) =
+        if p == t then kp <= kt
+        else
+          let s = max 0 (- kt) in
+          check_one_clause model (NeList.Tip (t, kt + s)) p (kp + s)
+      in
+      PMap.fold (fun _ t acc -> if NeList.for_all (above_prem t) prems then t :: acc else acc) d []
+  in
+  match List.filter (fun (can, _) -> not (Index.equal can.canon canv.canon)) members with
+  | [] -> []
+  | members -> (canv, kv) :: members
+
+(** [simplify_clauses_between model u v] Checks if [v <= u] holds, in which case it
+  merges the equivalence classes of universes between [u] and [v]. If [v] is the lub
+  of [v1..vn], they might not be merged while other universes between [u] and [v] are merged.
+    @param model Assumes [u <= v] holds already
+    @return a potentially modified model, without changing any values *)
+let simplify_clauses_between model u prems : t * equivalences =
+  let premsmax = (Premises._fold (fun u m -> max_opt (expr_value model u) m) prems None) in
+  if not (Option.equal Int.equal premsmax (expr_value model u)) then
+      (* We know v -> u and check for u -> v, this can only be true if both expressions
+        already have the same value *)
+    model, []
+  else
+    make_equiv model (find_to_merge model prems u)
 
 (** Enforce u <= v and check if v <= u already held, in that case, enforce u = v *)
 let enforce_leq_can_internal (v, u) m =
