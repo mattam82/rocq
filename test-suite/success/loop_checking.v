@@ -177,6 +177,16 @@ Print Universes Subgraph (w0 w1 w2 w3 w4).
 Check Constraint w3+2 <= w4, w2 <= w0, w4 < w0.
 Fail Check Constraint w4+2 <= w0.     (* w3 = 1, w2 = 2, w4 = 3, w0 = w1 = 4 *)
 
+(* Checking z0+1 <= z3 used not to terminate, when the value of Set is large compared to the
+   ones of the z universes, as with the lower bound of zc *)
+Universes zc z0 z1 z2 z3.
+Constraint 7 <= zc.
+Constraint z2+1 <= z1, z2 <= z3, z2 <= z0, z1+1 <= max(z2, z0), z0+1 <= max(z1, z3),
+  z2 <= max(z1, z0).
+(* z1 < max(z2, z0) with z2 < z1 gives z1 < z0, then z0 < max(z1, z3) gives z0 < z3 *)
+Check Constraint z0+1 <= z3, z2+2 <= z0.
+Fail Check Constraint z0+2 <= z3.     (* z2 = 1, z1 = 2, z0 = 3, z3 = 4 *)
+
 (** * Stress: long chains *)
 
 (* p0 < p1 < ... < p29 *)

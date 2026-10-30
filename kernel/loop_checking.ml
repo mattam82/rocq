@@ -1532,7 +1532,7 @@ let check_canset ?early_stop model ?(w=PSet.empty) (cls : CanSet.t) =
     (* Partition the clauses according to the presence of w in the premises *)
     (* Warning: m is not necessarily a model for w *)
     let rec inner_loop_partition w cardW premconclw conclw m =
-      match loop cardW PSet.empty premconclw m with
+      match loop ~inner:true cardW PSet.empty premconclw m with
       | Loop -> Loop
       | Model (wr, mr) ->
         (* This is only necessary when clauses do have multiple premises,
@@ -1544,7 +1544,12 @@ let check_canset ?early_stop model ?(w=PSet.empty) (cls : CanSet.t) =
         | None -> Model (wr, mr))
       in
       inner_loop_partition w cardW premconclw conclw m
-  and loop cV winit (cls : CanSet.t) m =
+  and loop ?(inner=false) cV winit (cls : CanSet.t) m =
+    (* An inner loop on [w] is given all the clauses whose conclusion and premises are in [w]
+       (MetaRocq's [cls ⇂ W]) and only considers them: the forward clauses of the universes it
+       updates could conclude outside [w], while it reports a loop only when all the universes
+       of [w] are updated *)
+    let add_fwd_clause m w cls = if inner then cls else add_fwd_clause m w cls in
     match check_clauses_with_premises ?early_stop cls m with
     | None -> Model (cls, m)
     | Some (wupd, m) ->
@@ -1562,7 +1567,7 @@ let check_canset ?early_stop model ?(w=PSet.empty) (cls : CanSet.t) =
           | None -> Model (wc, mc)
           | Some (w', mcls) ->
             let cls = add_fwd_clause mcls w' cls in
-            loop cV (PSet.union w w') cls mcls))
+            loop ~inner cV (PSet.union w w') cls mcls))
       end
   in
   loop cV w cls model
