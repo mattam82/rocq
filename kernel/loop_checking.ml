@@ -889,6 +889,15 @@ let add_subst_deps w prems deps =
 let subst_deps_of subst =
   PMap.fold (fun w (prems, _, _) deps -> add_subst_deps w prems deps) subst PMap.empty
 
+let remove_subst_deps w prems deps =
+  NeList.fold (fun (idx, _) deps ->
+      PMap.update idx (function
+          | None -> None
+          | Some s ->
+            let s = Index.Set.remove w s in
+            if Index.Set.is_empty s then None else Some s) deps)
+    prems deps
+
 (* [enter_equiv m u local v] makes the canonical node [u] an alias of the
    canonical premises [v]. The substitutions mentioning [u] are rewritten to
    mention [v] instead, so that the premises of the substitution stay
@@ -2887,182 +2896,279 @@ let is_trivial setidx u k v k' =
   (Index.equal v setidx && k >= k')
 
 
+(** [eliminate_can ~alive ~skip_set model idx] adds to [model] the resolvents on the canonical
+  universe [idx] of its clauses: each pair of clauses [premsbwd -> idx + cank] and
+  [idx + kprem, premsfwd -> concl + conclk] gives the clause [premsbwd, premsfwd -> concl + conclk]
+  (up to the shifts aligning [idx + cank] and [idx + kprem]), which does not mention [idx].
+  The clauses that do not mention [idx] then derive all the consequences of [model] that
+  do not mention it (Fourier-Motzkin elimination). Only the clauses whose other universes are
+  [alive] are considered, so that the resolvents only mention [alive] universes.
+  The clauses of [idx] are left in the model.
+  If [skip_set], the always valid clauses [idx + kprem, ... -> Set + conclk] with [kprem >= conclk]
+  are ignored. *)
+let eliminate_can ~alive ~skip_set model idx =
+  let can = repr model idx in
+  assert (Index.equal can.canon idx);
+  let setidx = Index.find Level.set model.table in
+  let alive_prems prems = Premises.for_all (fun (idx', _) -> alive idx') prems in
+  (* [premsbwd, idx + k -> idx + cank] with [k < cank] is equivalent to [premsbwd -> idx + cank] *)
+  let bwd = ClausesOf.fold (fun _local (cank, premsbwd) bwd ->
+      match Premises.filter (fun (idx', _) -> not (Index.equal idx idx')) premsbwd with
+      | Some premsbwd when alive_prems premsbwd -> (cank, premsbwd) :: bwd
+      | _ -> bwd)
+      can.clauses_bwd []
+  in
+  match bwd with
+  | [] -> model
+  | _ ->
+  ForwardClauses.fold (fun ~kprem ~concl ~prems model ->
+    (* The clauses concluding [idx] are considered as backward clauses above *)
+    if Index.equal concl idx || not (alive concl) then model else
+    PartialClausesOf.fold (fun (conclk, premsfwd) model ->
+      (* premsfwd, idx + kprem -> concl + conclk *)
+      if skip_set && Index.equal concl setidx && kprem >= conclk then model
+      else if not (Option.cata alive_prems true premsfwd) then model else
+      let premsfwd = cons_opt_nelist (idx, kprem) premsfwd in
+      List.fold_left (fun model (cank, premsbwd) ->
+        (* premsbwd -> idx + cank *)
+        let cl = merge_clauses premsbwd idx cank premsfwd concl conclk in
+        let cl =
+          match repr_clause model cl with
+          | (prems, NeList.Tip concl) -> (prems, concl)
+          | _ -> assert false (* The conclusion was already canonical, cannot expand to a list of universes *)
+        in
+        match filter_trivial_can_clause model cl with
+        | None -> model
+        | Some cl ->
+          match add_can_clause_model model cl with
+          | Some (_, m) -> m
+          | None -> model)
+        model bwd)
+      prems model)
+    can.clauses_fwd model
+
+(** [closure succs seeds] is the set of universes reachable from [seeds] through [succs] *)
+let closure succs seeds =
+  let rec aux todo visited =
+    match todo with
+    | [] -> visited
+    | idx :: todo ->
+      let todo, visited = succs idx (fun idx' (todo, visited as acc) ->
+          if PSet.mem idx' visited then acc else (idx' :: todo, PSet.add idx' visited))
+          (todo, visited)
+      in
+      aux todo visited
+  in aux (PSet.elements seeds) seeds
+
+(** [spanned_subgraph ~skip_set model kept] is the set of universes of the subgraph spanned
+  by the canonical universes [kept]: those above some kept universe through clauses whose
+  premises are all below some kept universe. Only these universes can appear in the derivation
+  of a clause between kept universes.
+  If [skip_set], the always valid clauses [Set + k <= max(..., u + k', ...)] with [k' >= k]
+  are ignored. *)
+let spanned_subgraph ~skip_set model kept =
+  let setidx = Index.find Level.set model.table in
+  let trivial concl k prems =
+    skip_set && Premises.exists (fun (u, ku) -> is_trivial setidx u ku concl k) prems
+  in
+  (* The universes below some kept universe [v]: [u + k <= max(..., v + k', ...)] or
+     [u + k <= max(..., u' + k', ...)] with [u'] below [v] *)
+  let below = closure (fun idx f acc ->
+      ForwardClauses.fold (fun ~kprem ~concl ~prems acc ->
+        if PartialClausesOf.exists (fun (conclk, others) ->
+            not (trivial concl conclk (fwd_premises idx kprem others))) prems
+        then f concl acc else acc)
+        (repr model idx).clauses_fwd acc)
+      kept
+  in
+  closure (fun idx f acc ->
+      ClausesOf.fold (fun _local (k, prems) acc ->
+        if trivial idx k prems || not (Premises.for_all (fun (u, _) -> PSet.mem u below) prems) then acc
+        else NeList.fold (fun (u, _) acc -> f u acc) prems acc)
+        (repr model idx).clauses_bwd acc)
+    kept
+
+(** [eliminate_spanned ~skip_set model kept] eliminates the universes of the subgraph spanned by
+  the canonical universes [kept] that are not [kept] (see [eliminate_can]). Afterwards, the clauses
+  between [kept] universes derive all the clauses between them derivable in [model]. *)
+let eliminate_spanned ~skip_set model kept =
+  let spanned = spanned_subgraph ~skip_set model kept in
+  let removed = PSet.filter (fun idx -> not (PSet.mem idx kept)) spanned in
+  let model, _ = PSet.fold (fun idx (model, alive) ->
+      let alive = PSet.remove idx alive in
+      eliminate_can ~alive:(fun idx -> PSet.mem idx alive) ~skip_set model idx, alive)
+      removed (model, spanned)
+  in
+  model
+
+(** [constraints_for ~kept model] computes the constraints between the [kept] universes
+  derivable in [model]. Only the subgraph spanned by the kept universes is considered
+  (see [spanned_subgraph]): the removed universes of that subgraph are eliminated, the
+  other ones are ignored. *)
 let constraints_for ~(kept:Level.Set.t) model (fold : 'a constraint_fold) (accu : 'a) : 'a =
   let add_cst u knd v (cst : 'a) : 'a =
     fold (interp_univ model u, knd, interp_univ model v) cst
   in
-  let keptp = Level.Set.fold (fun u accu -> PSet.add (Index.find u model.table) accu) kept PSet.empty in
-  (* rmap: partial map from canonical points to kept points *)
-  let rmap, csts = PSet.fold (fun u (rmap,csts) ->
-    let arcu = canonical_repr model (u, 0) in
-    let arcu, k = match arcu with
-      | NeList.Tip cank -> cank
-      | NeList.Cons _ -> raise NotCanonical
-    in
-    if PSet.mem arcu.canon keptp then
-      let csts =
-        if Index.equal u arcu.canon then csts
-        else
-          add_cst (NeList.tip (u, 0)) UnivConstraint.Eq (NeList.tip (arcu.canon, k)) csts
-      in
-      PMap.add arcu.canon arcu.canon rmap, csts
-    else
-      match PMap.find arcu.canon rmap with
-      | v -> rmap, add_cst (NeList.tip (u, 0)) UnivConstraint.Eq (NeList.tip (v, k)) csts
-      | exception Not_found -> PMap.add arcu.canon u rmap, csts)
-    keptp (PMap.empty, accu)
+  (* The canonical node [can] and shift [k] of each kept universe [u = can + k] *)
+  let keptp = Level.Set.fold (fun u keptp ->
+      let idx = Index.find u model.table in
+      match canonical_repr model (idx, 0) with
+      | NeList.Tip (can, k) -> PMap.add idx (can.canon, k) keptp
+      | NeList.Cons _ -> raise NotCanonical)
+      kept PMap.empty
   in
-  let removed =
-    PMap.fold
-      (fun idx can removed ->
-        if PSet.mem idx keptp then removed
-        else
-          if PMap.mem can.canon rmap then
-            (* This canonical node is represented by a kept universe, don't remove *)
-            removed
-          else (* Removal of a canonical node, we need to modify the clauses *)
-            PSet.add can.canon removed)
-    model.entries PSet.empty
+  (* rmap: map from the canonical nodes of the kept universes to a kept universe [v]
+     representing them, such that [v = can + k] *)
+  let rmap = PMap.fold (fun u (can, k) rmap ->
+      if PMap.mem can keptp then PMap.add can (can, 0) rmap
+      else match PMap.find_opt can rmap with
+        | Some (_, k') when k' <= k -> rmap
+        | _ -> PMap.add can (u, k) rmap)
+      keptp PMap.empty
   in
-  let set_can = repr model (Index.find Level.set model.table) in
-  let remove_can idx model =
-    let can = repr model idx in
-    assert (Index.equal can.canon idx);
-    let fwd = can.clauses_fwd in
-    let bwd = can.clauses_bwd in
-    ForwardClauses.fold (fun ~kprem ~concl ~prems model ->
-      let concl = repr model concl in
-      PartialClausesOf.fold (fun (conclk, premsfwd) model ->
-        (* premsfwd, can + kprem -> concl + conclk *)
-        if is_trivial set_can.canon can.canon kprem concl.canon conclk then model else
-        ClausesOf.fold (fun _local (cank, premsbwd) model ->
-          (* premsbwd -> can + cank *)
-          let premsfwd = (cons_opt_nelist (can.canon, kprem) premsfwd) in
-          let cl = merge_clauses premsbwd can.canon cank premsfwd concl.canon conclk in
-          let cl =
-            match repr_clause model cl with
-            | (prems, NeList.Tip concl) -> (prems, concl)
-            | _ -> assert false (* The conclusion was already canonical, cannot expand to a list of universes *)
-          in
-          match filter_trivial_can_clause model cl with
-          | None -> model
-          | Some cl ->
-            match add_can_clause_model model cl with
-            | Some (_, m) -> m
-            | None -> model)
-        bwd model)
-      prems model)
-    fwd model
+  let is_kept idx = PMap.mem idx rmap in
+  (* [can + j] is [v + j - k] *)
+  let rexpr (can, j) = let (v, k) = PMap.find can rmap in (v, j - k) in
+  let add_shifted_cst l knd r csts =
+    let min_shift prems m = NeList.fold (fun (_, k) m -> min k m) prems m in
+    let shift = min_shift l (min_shift r 0) in
+    let l, r = if shift < 0 then Premises.shift (- shift) l, Premises.shift (- shift) r else l, r in
+    add_cst l knd r csts
   in
-  (* At this point the clauses that don't mention removed universes are enough to
-     derive the clauses between kept universes *)
-  let model = PSet.fold remove_can removed model in
-  let canon_repr can =
-    match PMap.find can.canon rmap with
-    | v -> v
-    | exception Not_found -> assert false
+  let kept_cans = PMap.fold (fun can _ acc -> PSet.add can acc) rmap PSet.empty in
+  let model = eliminate_spanned ~skip_set:true model kept_cans in
+  let csts = PMap.fold (fun u (can, k) csts ->
+      if Index.equal u (fst (PMap.find can rmap)) then csts
+      else add_shifted_cst (NeList.tip (u, 0)) UnivConstraint.Eq (NeList.tip (rexpr (can, k))) csts)
+      keptp accu
   in
-  let can_prem_to_prem l = NeList.map (fun (x, k) -> (canon_repr x, k)) l in
-  let add_from u csts prems k =
-    let cprems = repr_premises model prems in
-    if not (NeList.exists (fun (v, _) -> PSet.mem v.canon removed) cprems) then
-      (add_cst (NeList.tip (canon_repr u, k)) UnivConstraint.Le (can_prem_to_prem cprems) csts)
-    else csts
-  in
-  let fold u acc =
-    let arc, uk =
-      match canonical_repr model (u, 0) with
-      | NeList.Tip can -> can
-      | NeList.Cons _ -> raise NotCanonical
-    in
-    if not (Index.equal arc.canon u) then acc else
-    let cls = arc.clauses_bwd in
-    ClausesOf.fold (fun _local (k, prems) csts -> add_from arc csts prems (k + uk)) cls acc
-  in
-  PSet.fold fold keptp csts
+  PMap.fold (fun can _ csts ->
+      ClausesOf.fold (fun _local (k, prems) csts ->
+        if Premises.for_all (fun (u, _) -> is_kept u) prems then
+          add_shifted_cst (NeList.tip (rexpr (can, k))) UnivConstraint.Le (NeList.map rexpr prems) csts
+        else csts)
+        (repr model can).clauses_bwd csts)
+    rmap csts
 
-let occurs_in_premises idxs prems =
-  Premises.exists (fun (idx', _) -> PSet.mem idx' idxs) prems
+let occurs_in_premises removed prems =
+  Premises.exists (fun (idx', _) -> removed idx') prems
 
-let remove_from_fwd idxs fwd =
+(** [remove_from_fwd removed fwd] and [remove_from_bwd removed bwd] remove the clauses mentioning
+  universes satisfying [removed] *)
+let remove_from_fwd removed fwd =
   let f _kprem concl prems =
-    if PSet.mem concl idxs then None
+    if removed concl then None
     else
       let prems = PartialClausesOf.filter (fun (_kconcl, prems) ->
         match prems with
         | None -> true
-        | Some prems -> not (occurs_in_premises idxs prems))
+        | Some prems -> not (occurs_in_premises removed prems))
         prems
       in
       if PartialClausesOf.is_empty prems then None else Some prems
   in
   ForwardClauses._filter_map f fwd
 
-let remove_from_bwd idxs bwd =
-  let f (_kconcl, prems) = not (occurs_in_premises idxs prems) in
+let remove_from_bwd removed bwd =
+  let f (_kconcl, prems) = not (occurs_in_premises removed prems) in
   ClausesOf.filter f bwd
 
 (** [remove_from_model idxs model] Removes all clauses mentionning [idxs] and
   the canonical nodes for [idxs] from the model. The substitution is also filtered to not mention [idxs].
   The levels are still registered in the [Index] table, for possible reuse (see [add_model]) *)
 let remove_from_model idxs model =
-  let f idx' can =
-    if PSet.mem idx' idxs then None
+  (* The clauses mentioning [idxs] are all registered in the clauses of [idxs]:
+     only the nodes of their other universes need to be filtered *)
+  let add_prems prems acc = NeList.fold (fun (idx', _) acc -> PSet.add idx' acc) prems acc in
+  let neighbors = PSet.fold (fun idx acc ->
+      let can = repr model idx in
+      let acc = ForwardClauses.fold (fun ~kprem:_ ~concl ~prems acc ->
+          PartialClausesOf.fold (fun (_, others) acc -> Option.fold_right add_prems others acc)
+            prems (PSet.add concl acc))
+          can.clauses_fwd acc
+      in
+      ClausesOf.fold (fun _local (_, prems) acc -> add_prems prems acc) can.clauses_bwd acc)
+      idxs PSet.empty
+  in
+  let removed idx = PSet.mem idx idxs in
+  let f idx' entries =
+    if removed idx' then entries
     else
-      let clauses_fwd = remove_from_fwd idxs can.clauses_fwd in
-      let clauses_bwd = remove_from_bwd idxs can.clauses_bwd in
-      Some { can with clauses_fwd; clauses_bwd }
+      let can = repr model idx' in
+      let clauses_fwd = remove_from_fwd removed can.clauses_fwd in
+      let clauses_bwd = remove_from_bwd removed can.clauses_bwd in
+      PMap.add idx' { can with clauses_fwd; clauses_bwd } entries
   in
-  let feq idx (u, _local, _local_eq as eq) =
-    if PSet.mem idx idxs then None
-    else if occurs_in_premises idxs u then None
-    else Some eq
+  let entries = PSet.fold f neighbors model.entries in
+  let entries = PSet.fold PMap.remove idxs entries in
+  (* The substitutions mentioning [idxs] are found in [subst_deps] *)
+  let feq idx (subst, subst_deps) =
+    let ws = Option.default Index.Set.empty (PMap.find_opt idx subst_deps) in
+    let subst, subst_deps = Index.Set.fold (fun w (subst, subst_deps as acc) ->
+        match PMap.find_opt w subst with
+        | None -> acc
+        | Some (u, _, _) -> PMap.remove w subst, remove_subst_deps w u subst_deps)
+        ws (subst, subst_deps)
+    in
+    subst, PMap.remove idx subst_deps
   in
-  let entries = PMap.filter_map f model.entries in
-  let subst = PMap.filter_map feq model.subst in
-  { model with entries; subst; subst_deps = subst_deps_of subst; canonical = PMap.cardinal entries }
+  let subst, subst_deps = PSet.fold feq idxs (model.subst, model.subst_deps) in
+  { model with entries; subst; subst_deps; canonical = model.canonical - PSet.cardinal idxs }
+
+(** [remove_eliminating removed model] eliminates the [removed] universes one by one
+  (see [eliminate_can]) before removing their nodes and clauses: the cost is proportional
+  to the number of removed universes. *)
+let remove_eliminating removed model =
+  let removed = Level.Set.fold (fun u accu -> PSet.add (Index.find u model.table) accu) removed PSet.empty in
+  (* The removed aliases are dropped from the substitution *)
+  let removed, subst, subst_deps =
+    let remove_from_subst idx (removed, subst, subst_deps as acc) =
+      match PMap.find_opt idx subst with
+      | None -> acc
+      | Some (u, _, _) -> (PSet.remove idx removed, PMap.remove idx subst, remove_subst_deps idx u subst_deps)
+    in
+    PSet.fold remove_from_subst removed (removed, model.subst, model.subst_deps)
+  in
+  (* After the elimination of the removed universes, the clauses that don't mention them
+     are enough to derive the clauses between kept universes. The clauses mentioning already
+     eliminated universes are removed below, so they are not used for the next eliminations. *)
+  let model, _ = PSet.fold (fun idx (model, eliminated) ->
+      let eliminated = PSet.add idx eliminated in
+      eliminate_can ~alive:(fun idx -> not (PSet.mem idx eliminated)) ~skip_set:false model idx, eliminated)
+      removed ({ model with subst; subst_deps }, PSet.empty)
+  in
+  remove_from_model removed model
+
+(** [remove_restricting removed model] computes the same model as [remove_eliminating], from
+  the kept universes: only the removed universes of the subgraph spanned by the kept ones
+  are eliminated, and the model is rebuilt from the kept nodes. The other removed universes
+  are never considered, which is faster when most universes are removed. *)
+let remove_restricting removed model =
+  let is_removed idx = Level.Set.mem (Index.repr idx model.table) removed in
+  let kept = PMap.fold (fun idx _ kept -> if is_removed idx then kept else PSet.add idx kept)
+      model.entries PSet.empty
+  in
+  let model = eliminate_spanned ~skip_set:false model kept in
+  let removed_can idx = not (PSet.mem idx kept) in
+  let add_kept idx entries =
+    let can = repr model idx in
+    let clauses_fwd = remove_from_fwd removed_can can.clauses_fwd in
+    let clauses_bwd = remove_from_bwd removed_can can.clauses_bwd in
+    PMap.add idx { can with clauses_fwd; clauses_bwd } entries
+  in
+  let entries = PSet.fold add_kept kept PMap.empty in
+  (* The removed aliases and the aliases of removed universes are dropped *)
+  let subst = PMap.filter (fun idx (u, _local, _local_eq) ->
+      not (is_removed idx) && not (occurs_in_premises removed_can u))
+      model.subst
+  in
+  { model with entries; subst; subst_deps = subst_deps_of subst; canonical = PSet.cardinal kept }
 
 let remove removed model =
-  let removed = Level.Set.fold (fun u accu -> PSet.add (Index.find u model.table) accu) removed PSet.empty in
-  let remove_can idx model =
-    let can = repr model idx in
-    assert (Index.equal can.canon idx);
-    let fwd = can.clauses_fwd in
-    let bwd = can.clauses_bwd in
-    ForwardClauses.fold (fun ~kprem ~concl ~prems model ->
-      let concl = repr model concl in
-      PartialClausesOf.fold (fun (conclk, premsfwd) model ->
-        (* premsfwd, can + kprem -> concl + conclk *)
-        ClausesOf.fold (fun _local (cank, premsbwd) model ->
-          (* premsbwd -> can + cank *)
-          let premsfwd = (cons_opt_nelist (can.canon, kprem) premsfwd) in
-          let cl = merge_clauses premsbwd can.canon cank premsfwd concl.canon conclk in
-          let cl =
-            match repr_clause model cl with
-            | (prems, NeList.Tip concl) -> (prems, concl)
-            | _ -> assert false (* The conclusion was already canonical, cannot expand to a list of universes *)
-          in
-          match filter_trivial_can_clause model cl with
-          | None -> model
-          | Some cl ->
-            match add_can_clause_model model cl with
-            | Some (_, m) -> m
-            | None -> model)
-        bwd model)
-      prems model)
-    fwd model
-  in
-  let removed, subst =
-    let remove_from_subst idx (removed, subst) =
-      if PMap.mem idx subst then (PSet.remove idx removed, PMap.remove idx subst)
-      else removed, subst
-    in
-    PSet.fold remove_from_subst removed (removed, model.subst)
-  in
-  (* At this point the clauses that don't mention removed universes are enough to
-     derive the clauses between kept universes *)
-  let model = PSet.fold remove_can removed { model with subst; subst_deps = subst_deps_of subst } in
-  remove_from_model removed model
+  (* Each removed universe costs more to [remove_eliminating] than each canonical node
+     of the model to [remove_restricting] *)
+  if 2 * Level.Set.cardinal removed > model.canonical then remove_restricting removed model
+  else remove_eliminating removed model
 
 let domain model = Index.dom model.table
 
