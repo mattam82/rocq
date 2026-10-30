@@ -22,8 +22,6 @@ val set_local : t -> t
 
 val empty : t
 
-val check_invariants : required_canonical:(Level.t -> bool) -> t -> unit
-
 exception AlreadyDeclared
 val add : ?rigid:bool -> Level.t -> t -> t
 (** All points must be pre-declared through this function before
@@ -98,9 +96,6 @@ val constraints_of : t -> ?only_local:bool -> 'a constraint_fold -> 'a ->
 
 val constraints_for : kept:Level.Set.t -> t -> 'a constraint_fold -> 'a -> 'a
 
-val remove : Level.Set.t -> t -> t
-(** [remove l m] Remove the [l] nodes and constraints mentionning [l] from [m] *)
-
 val domain : t -> Level.Set.t
 (** Return the set of registered universe variables *)
 
@@ -132,21 +127,31 @@ type 'a simplification_result =
 val minimize : Level.t -> t -> t simplification_result
 val maximize : Level.t -> t -> t simplification_result
 
-(* Hack for template-polymorphism. [remove_set_clauses u m] removes all [u -> Set+0] clauses from the model  *)
-val remove_set_clauses : Level.t -> t -> t
-
 (** {5 High-level representation} *)
 
 type node =
 | Alias of Universe.t
 | Node of (int * Universe.t) list (** Nodes [(k_i, u_i); ...] s.t. u + k_i <= u_i *)
 
-type repr = node Level.Map.t
+type model_repr = node Level.Map.t
 
 (** Get a representation of the model, optionally selecting only local universes and constraints. *)
-val repr : local:bool -> t -> repr
+val model_repr : local:bool -> t -> model_repr
 
 (* Print the model. Optionally print only the local universes and constraints. *)
 val pr_model : ?local:bool -> t -> Pp.t
 
 val valuation : t -> int Level.Map.t
+
+(** {5 Internal functions, used by [UGraph]} *)
+
+module Internal :
+sig
+  val check_invariants : required_canonical:(Level.t -> bool) -> t -> unit
+
+  val remove : Level.Set.t -> t -> t
+  (** [remove l m] Remove the [l] nodes and constraints mentionning [l] from [m] *)
+
+  (* Hack for template-polymorphism. [remove_set_clauses u m] removes all [u -> Set+0] clauses from the model  *)
+  val remove_set_clauses : Level.t -> t -> t
+end

@@ -186,7 +186,7 @@ let maximize l g =
   | G.CannotSimplify -> G.CannotSimplify
 
 let remove_set_clauses l g =
-  let graph = G.remove_set_clauses l g.graph in
+  let graph = G.Internal.remove_set_clauses l g.graph in
   { g with graph }
 
 let pr_model ?local g = G.pr_model ?local g.graph
@@ -199,7 +199,7 @@ let constraints_for ~kept g =
   G.constraints_for ~kept g.graph add UnivConstraints.empty
 
 let remove removed g =
-  { g with graph = G.remove removed g.graph }
+  { g with graph = G.Internal.remove removed g.graph }
 
 let subst ?(local=false) g = G.subst ~local g.graph
 
@@ -215,7 +215,7 @@ let domain g = G.domain g.graph
 
 let variables ~local ~with_subst g = G.variables ~local ~with_subst g.graph
 
-let check_universes_invariants g = G.check_invariants ~required_canonical:Level.is_set g.graph
+let check_universes_invariants g = G.Internal.check_invariants ~required_canonical:Level.is_set g.graph
 
 (** Pretty-printing *)
 
@@ -246,7 +246,7 @@ type node = G.node =
 | Alias of Universe.t
 | Node of (int * Universe.t) list (** Nodes [(k_i, u_i); ...] s.t. u + k_i <= u_i *)
 
-let repr ?(local=false) g = G.repr ~local g.graph
+let repr ?(local=false) g = G.model_repr ~local g.graph
 
 let pr_universes prl g = pr_pmap Pp.mt (pr_arc prl) g
 
