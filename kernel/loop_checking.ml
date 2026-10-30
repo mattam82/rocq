@@ -1039,7 +1039,12 @@ type can_premises = (canonical_node * int) NeList.t
 type can_expr = canonical_node * int
 type can_clause = can_premises * can_expr
 
-let shrink_can_premises prems concl conclk =
+type 'a canonical_result = 
+  | Trivial
+  | Contradictory
+  | Canonical of 'a
+
+let simplify_can_premises prems concl conclk =
   (* The result is sorted according to the order on the [canon] indices, mentioning each
      universe once with its largest increment, as built by [Premises.add] *)
   let rec insert ((prem, k) as x) prems =
@@ -1057,28 +1062,34 @@ let shrink_can_premises prems concl conclk =
         let prems'' = insert x prems' in
         if prems' == prems'' then prems else NeList.Cons (p, prems'')
   in
+  (* A premise [concl + k] makes the clause trivial if [k >= conclk], otherwise it can never
+     be the maximum and is dropped: [concl + conclk <= max(concl + k, prems)] is equivalent to
+     [concl + conclk <= max(prems)]. Without premises left, the clause is contradictory. *)
+  let exception IsTrivial in
   let update ((prem, k) as x) acc =
-    if Index.equal prem.canon concl.canon && k >= conclk then acc
+    if Index.equal prem.canon concl.canon then
+      if k >= conclk then raise_notrace IsTrivial else acc
     else match acc with
       | None -> Some (NeList.Tip x)
       | Some prems -> Some (insert x prems)
   in
-  let rec aux acc = function
-    | NeList.Tip x -> update x acc
-    | NeList.Cons (x, xs) -> aux (update x acc) xs
-  in aux None prems
+  match NeList.fold update prems None with
+  | exception IsTrivial -> Trivial
+  | None -> Contradictory
+  | Some prems -> Canonical prems
 
 (** Simplify u <= max (Set, v) clauses to u <= v and filter away u <= ... u + n , ... clauses, always valid *)
-let filter_trivial_can_clause m ((prems, (concl, k as conclk)) : can_clause) : can_clause option =
+let simplify_can_clause m ((prems, (concl, k as conclk)) : can_clause) : can_clause canonical_result =
   (* Filter out `Set` from max(Set, u) -> v constraints *)
   let setidx = Index.find Level.set m.table in
-  (* Trivial ... u + k + n ... -> u + k clause *)      
-  if NeList.exists (fun (prem, k') -> (prem == concl && k' >= k) || (concl.canon == setidx && k' >= k && k > 0)) prems then
-    None
+  (* Trivial ... u + k + n ... -> Set + k (k > 0) clause *)
+  if concl.canon == setidx && NeList.exists (fun (_prem, k') -> k' >= k && k > 0) prems then
+    Trivial
   else
-    match shrink_can_premises prems concl k with
-    | Some prems -> Some (prems, conclk)
-    | None -> None
+    match simplify_can_premises prems concl k with
+    | Canonical prems -> Canonical (prems, conclk)
+    | Trivial -> Trivial
+    | Contradictory -> Contradictory
 
 (** [sorted_premises prems] holds when [prems] is sorted according to the order on [Index.t],
   mentioning each universe once, as built by [Premises.add]. *)
@@ -1088,9 +1099,17 @@ let rec sorted_premises = function
     Index.compare idx idx' < 0 && sorted_premises prems
 
 (** [is_trivial_clause setidx (prems, (concl, k))] holds when the clause is trivial,
-  in the sense of [filter_trivial_can_clause]. *)
+  in the sense of [simplify_can_clause]. *)
 let is_trivial_clause setidx (prems, (concl, k)) =
   Premises.exists (fun (prem, k') -> k' >= k && (Index.equal prem concl || (Index.equal concl setidx && k > 0))) prems
+
+(** [simplify_clause setidx cl] simplifies the clause [cl] on canonical sorted premises as
+  [simplify_can_clause]: if it is not trivial, its premises on its conclusion are dropped. *)
+let simplify_clause setidx (prems, (concl, k) as cl) =
+  if is_trivial_clause setidx cl then Trivial
+  else match Premises.filter (fun (idx, _) -> not (Index.equal idx concl)) prems with
+    | None -> Contradictory
+    | Some prems' -> Canonical (if prems' == prems then cl else (prems', (concl, k)))
 
 (** [fwd_premises prem kprem others] are the premises of the forward clause [prem + kprem, others -> _] *)
 let fwd_premises prem kprem others =
@@ -1102,7 +1121,8 @@ let check_invariants ~(required_canonical:Level.t -> bool) model =
   let required_canonical u = required_canonical (Index.repr u model.table) in
   let n_canon = ref 0 in
   (* The clause [prems -> concl + k], stored in the [kind] clauses of [node], only mentions canonical universes,
-     has sorted premises mentioning each universe once and is not trivial *)
+     has sorted premises mentioning each universe once but not its conclusion, and is neither trivial
+     nor contradictory *)
   let check_clause kind node (prems, (concl, k) as cl) =
     let err msg =
       CErrors.user_err Pp.(str kind ++ str" clause " ++ _pr_clause_idx model cl ++ str" of " ++
@@ -1114,12 +1134,15 @@ let check_invariants ~(required_canonical:Level.t -> bool) model =
     in
     check_canonical concl;
     Premises.iter (fun (idx, _) -> check_canonical idx) prems;
+    if Premises.exists (fun (idx, _) -> Index.equal idx concl) prems then
+      err Pp.(str"mentions its conclusion in its premises");
     if not (sorted_premises prems) then
       err Pp.(str"has unsorted premises, or premises mentioning the same universe several times");
     let canprems = NeList.map (fun (idx, k) -> (repr model idx, k)) prems in
-    match filter_trivial_can_clause model (canprems, (repr model concl, k)) with
-    | None -> err Pp.(str"is trivial")
-    | Some _ -> ()
+    match simplify_can_clause model (canprems, (repr model concl, k)) with
+    | Trivial -> err Pp.(str"is trivial")
+    | Contradictory -> err Pp.(str"is contradictory")
+    | Canonical _ -> ()
   in
   PMap.iter (fun idx can ->
     assert (Index.equal idx can.canon);
@@ -1583,7 +1606,7 @@ let remove_premise idx kprem prems =
 
 (** [add_can_clause_model m cl] adds the clause [cl] to [m].
   @requires the premises of [cl] are sorted according to the order on their [canon]
-  indices, mentioning each universe once, as produced by [filter_trivial_can_clause]. *)
+  indices, mentioning each universe once, as produced by [simplify_can_clause]. *)
 let add_can_clause_model m ((prems, (canl, conclk)) : can_clause) : (can_clause * model) option =
   let canprems = NeList.map (fun (can, k) -> (can.canon, k)) prems in
   let clof = (conclk, canprems) in
@@ -1632,7 +1655,7 @@ let in_premises idx prems =
   of a level by an expression. *)
 
 (** [subst_fwd_clauses setidx prem idx u fwd] substitutes [idx] by [u] in the premises and conclusions of the forward clauses [fwd] of [prem].
- Trivial clauses (see [is_trivial_clause]) are removed. If [prem] is [idx], the clauses become forward clauses of [u],
+ The clauses are simplified (see [simplify_clause]). If [prem] is [idx], the clauses become forward clauses of [u],
  otherwise the increment of [prem] changes when [u] mentions [prem], as premises on the same universe are merged.
  @param fwd A set of forward clauses of shape [prem + kprem, prems -> concl + k]. *)
 let subst_fwd_clauses setidx prem idx (idx', k' as u) fwd =
@@ -1650,8 +1673,12 @@ let subst_fwd_clauses setidx prem idx (idx', k' as u) fwd =
         let prems' = Premises.subst idx (NeList.Tip u) prems in
         if prems' == prems && not (Index.equal concl idx) then
           ForwardClauses.add { kprem; concl; prems = PartialClausesOf.singleton (kconcl, others) } fwd
-        else if is_trivial_clause setidx (prems', (concl', kconcl')) then fwd
-        else
+        else match simplify_clause setidx (prems', (concl', kconcl')) with
+        | Trivial -> fwd
+        | Contradictory -> assert false (* The substituted equality holds in the model *)
+        | Canonical (prems', _) ->
+          (* [prem'] is dropped from the premises when it is the conclusion *)
+          if not (in_premises prem' prems') then fwd else
           let kprem = NeList._find (fun p -> Index.equal p prem') prems' in
           let others = remove_premise prem' kprem prems' in
           ForwardClauses.add { kprem; concl = concl'; prems = PartialClausesOf.singleton (kconcl', others) } fwd)
@@ -1659,14 +1686,16 @@ let subst_fwd_clauses setidx prem idx (idx', k' as u) fwd =
     fwd ForwardClauses.empty
 
 (** [subst_bwd_clauses setidx concl idx u bwd] substitute [idx] by [u] in the premises of the backward clauses [bwd] of [concl].
-  Trivial clauses (see [is_trivial_clause]) are removed.
+  The clauses are simplified (see [simplify_clause]).
   @param bwd A set of backward clauses of shape [prems -> concl + k]
   @return A set of backward clauses of shape [prems[idx/u] -> concl + k] *)
 let subst_bwd_clauses setidx concl idx u bwd  =
   ClausesOf.filter_map (fun _local (kconcl, prems as cli) ->
     let prems' = Premises.subst idx (NeList.Tip u) prems in
-    if is_trivial_clause setidx (prems', (concl, kconcl)) then None
-    else if prems' == prems then Some cli else Some (kconcl, prems')) bwd
+    match simplify_clause setidx (prems', (concl, kconcl)) with
+    | Trivial -> None
+    | Contradictory -> assert false (* The substituted equality holds in the model *)
+    | Canonical (prems', _) -> if prems' == prems then Some cli else Some (kconcl, prems')) bwd
 
 (** [subst_fwd_of_prem setidx idx u prem model] For a given premise [prem] substitute [idx] by [u]
   in the forward clauses of its canonical representative. Nothing is done if [prem] is [idx].
@@ -2235,9 +2264,10 @@ let update_model ((prems, (can, k)) : can_clause) (m : model) : PSet.t * model =
 
 let infer_clause_extension cl minit =
   debug_loop_checking Pp.(fun () -> str "infer_clause_extension " ++ pr_clause (pr_can_expr minit) cl);
-  match filter_trivial_can_clause minit cl with
-  | None -> debug_loop_checking Pp.(fun () -> str "clause is trivial "); Some minit
-  | Some cl ->
+  match simplify_can_clause minit cl with
+  | Trivial -> debug_loop_checking Pp.(fun () -> str "clause is trivial "); Some minit
+  | Contradictory -> debug_loop_checking Pp.(fun () -> str "clause is contradictory "); None
+  | Canonical cl ->
     match add_can_clause_model minit cl with
     | None -> (* The clause was already present in the model *)
       Some minit
@@ -2316,9 +2346,10 @@ let enforce_leq_can_internal (v, u) m =
     else Some (m, [])    
 
 let enforce_leq_can u v m =
-  match filter_trivial_can_clause m (v, u) with
-  | None -> Some (m, [])
-  | Some cl -> enforce_leq_can_internal cl m
+  match simplify_can_clause m (v, u) with
+  | Trivial -> Some (m, [])
+  | Contradictory -> None
+  | Canonical cl -> enforce_leq_can_internal cl m
 
 let canonical_repr_level_expr m (u, k) : can_premises =
   try canonical_repr m (Index.find u m.table, k)
@@ -2397,9 +2428,10 @@ let enforce_leq u v m = enforce u UnivConstraint.Le v m
 let enforce_lt u v m = enforce_leq (Universe.addn u 1) v m
 
 let check_leq_can canu canv model =
-  match filter_trivial_can_clause model (canv, canu) with
-  | None -> true
-  | Some (prems, (concl, k)) ->
+  match simplify_can_clause model (canv, canu) with
+  | Trivial -> true
+  | Contradictory -> false
+  | Canonical (prems, (concl, k)) ->
     check_one_clause model prems concl k || check_one_clause_complete model prems concl k
 
 let rec check_leq_premises m (u, v) =
@@ -2957,9 +2989,10 @@ let eliminate_can ~alive ~skip_set model idx =
           | (prems, NeList.Tip concl) -> (prems, concl)
           | _ -> assert false (* The conclusion was already canonical, cannot expand to a list of universes *)
         in
-        match filter_trivial_can_clause model cl with
-        | None -> model
-        | Some cl ->
+        match simplify_can_clause model cl with
+        | Trivial -> model
+        | Contradictory -> assert false
+        | Canonical cl ->
           match add_can_clause_model model cl with
           | Some (_, m) -> m
           | None -> model)
