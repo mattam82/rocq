@@ -2283,6 +2283,24 @@ let check_one_clause model prems concl k =
     | None -> false
     | Some value -> k <= value
 
+(** [check_one_clause_complete model prems concl k] decides whether [concl + k <= max(prems)]
+  holds in all the valuations of the universes in the natural numbers satisfying [model].
+  [check_one_clause] only finds the clauses derivable from the premises, which also hold
+  when the universes not bounded by the premises are infinite: e.g. from [u < max(u, v)],
+  it does not find [u < v]. As in MetaRocq's [check_clause] (Deciders.v), the clause holds
+  iff its negation [max(prems) < concl + k], i.e. the clauses [p + kp + 1 <= concl + k] for
+  each premise [p + kp], has no model with [model]. *)
+let check_one_clause_complete model prems concl k =
+  let rec aux m = function
+    | [] -> false (* A model of the negation *)
+    | (p, kp) :: prems ->
+      let cl = (NeList.tip (refresh_can_expr m (concl, k)), refresh_can_expr m (p, kp + 1)) in
+      match infer_clause_extension cl m with
+      | None -> true
+      | Some m -> aux m prems
+  in
+  aux model (NeList.to_list prems)
+
 (** Enforce u <= v and check if v <= u already held, in that case, enforce u = v *)
 let enforce_leq_can_internal (v, u) m =
   if (match v with NeList.Tip v -> eq_can_expr u v | _ -> false) then Some (m, [])
@@ -2382,7 +2400,7 @@ let check_leq_can canu canv model =
   match filter_trivial_can_clause model (canv, canu) with
   | None -> true
   | Some (prems, (concl, k)) ->
-    check_one_clause model prems concl k
+    check_one_clause model prems concl k || check_one_clause_complete model prems concl k
 
 let rec check_leq_premises m (u, v) =
   let canv = canonical_premises_repr m v in
