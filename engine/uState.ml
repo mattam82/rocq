@@ -1732,7 +1732,9 @@ let restrict_uctx uctx keep =
       demoted_local_context;
       flexible_variables = Level.Set.diff uctx.flexible_variables removed;
       variances = Option.map (fun v -> Level.Set.fold Level.Map.remove removed v) uctx.variances;
-      minim_extra = UnivMinim.remove_from_extra removed uctx.minim_extra;
+      (* Normalized first, so that the weak constraints on aliases of removed universes
+         are removed, and those on removed aliases of kept universes are kept *)
+      minim_extra = UnivMinim.remove_from_extra removed (UnivMinim.nf_extra (nf_universe uctx) uctx.minim_extra);
       universes } in
     debug_restrict Pp.(fun () -> str"Restricted universe context" ++ pr ~local:true uctx');
     uctx'

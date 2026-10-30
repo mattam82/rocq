@@ -223,11 +223,16 @@ let extra_union a b = {
   above_zero = Level.Set.union a.above_zero b.above_zero;
 }
 
-let remove_from_extra removed a =
-  let filter (l, r) =
-    Level.Set.subset removed (Universe.levels l) ||
-    Level.Set.subset removed (Universe.levels r)
+let nf_extra nf a =
+  let add (l, r) weak =
+    let l = nf l and r = nf r in
+    if Universe.equal l r then weak else UPairSet.add (l, r) weak
   in
+  { a with weak_constraints = UPairSet.fold add a.weak_constraints UPairSet.empty }
+
+let remove_from_extra removed a =
+  let mentions_removed u = Universe.exists (fun (l, _) -> Level.Set.mem l removed) u in
+  let filter (l, r) = not (mentions_removed l || mentions_removed r) in
   { weak_constraints = UPairSet.filter filter a.weak_constraints;
     above_zero = Level.Set.diff a.above_zero removed;
     above_prop = Level.Set.diff a.above_prop removed; }

@@ -23,7 +23,13 @@ val empty_extra : extra
 
 val extra_union : extra -> extra -> extra
 
+val nf_extra : (Universe.t -> Universe.t) -> extra -> extra
+(** [nf_extra nf extra] normalizes the weak constraints with [nf], dropping those that
+  become trivial *)
+
 val remove_from_extra : Level.Set.t -> extra -> extra
+(** [remove_from_extra removed extra] removes the weak constraints mentioning [removed]
+  universes, and the [removed] universes from the other fields *)
 
 (** Operations on inferred variances *)
 
