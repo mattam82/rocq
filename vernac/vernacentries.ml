@@ -504,7 +504,20 @@ let universe_subgraph kept univ =
     UGraph.add_universe u ~strict ~rigid:true newgraph
   in
   let univ = Level.Set.fold add kept UGraph.initial_universes in
-  fst (UGraph.merge_constraints csts univ)
+  (* The lower bounds [Set+n <= u] obtained through the removed universes are often
+     implied by the other constraints: they are added last, the strongest first,
+     and only when they are not implied already. *)
+  let lower_bound (l, d, _) = match d, Universe.repr l with
+    | UnivConstraint.Le, [(s, n)] when Level.is_set s -> Some n
+    | _ -> None
+  in
+  let lower, others = UnivConstraints.partition (fun c -> Option.has_some (lower_bound c)) csts in
+  let univ = fst (UGraph.merge_constraints others univ) in
+  let strength c = Option.default 0 (lower_bound c) in
+  let lower = List.sort (fun c c' -> Int.compare (strength c') (strength c)) (UnivConstraints.elements lower) in
+  List.fold_left (fun univ c ->
+      if UGraph.check_constraint univ c then univ else fst (UGraph.enforce_constraint c univ))
+    univ lower
 
 let sort_universes g =
   let open Univ in
