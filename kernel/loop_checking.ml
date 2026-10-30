@@ -2271,9 +2271,11 @@ let check_one_clause model prems concl k =
     update_model_value values x (Some (max k (Option.default 0 v)))) prems
     { model with values = Some PMap.empty }
   in
-  let w, cls = NeList.fold (fun (prem, _k) (w, cls) -> (PSet.add prem.canon w, CanSet.add prem.canon prem.clauses_fwd cls)) prems (PSet.empty, CanSet.empty) in
-  (* We have a model where only the premises are true, check if the conclusion follows *)
-  match check_canset ~early_stop:(concl, k) model ~w cls with
+  let cls = NeList.fold (fun (prem, _k) cls -> CanSet.add prem.canon prem.clauses_fwd cls) prems CanSet.empty in
+  (* We have a model where only the premises are true, check if the conclusion follows.
+     The premises are not updated universes: starting with them would answer [Loop] as
+     soon as all the other universes are updated (as in MetaRocq's [loop_check]) *)
+  match check_canset ~early_stop:(concl, k) model cls with
   | exception FoundImplication -> true
   | Loop -> false
   | Model (_updates, model') ->
